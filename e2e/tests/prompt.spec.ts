@@ -5,33 +5,9 @@ import path from "node:path";
 import { type ElectronApplication, type Page, expect, test } from "@playwright/test";
 import { createPrompt, promptFilePath, readThreads, writeThread } from "fusen-core";
 import { launchVSCode, vscodeStartupTimeoutMs } from "../launch";
+import { addNote } from "../notes";
 
 const fixtureWorkspacePath = path.resolve(__dirname, "../fixtures/workspace");
-
-/** Adds a note with `noteText` from the gutter on the line of the open editor that contains `lineText`. */
-async function addNote(window: Page, lineText: string, noteText: string): Promise<void> {
-  // The gutter glyph column is shared by all lines, so click it at the height of the target line.
-  const targetLine = window.locator(".view-line", { hasText: lineText });
-  // Glyphs of lines being re-rendered can be attached without a box, so wait for one that is laid out.
-  const gutterGlyph = window.locator(".margin-view-overlays .comment-range-glyph").filter({ visible: true }).first();
-  await expect(targetLine).toBeVisible({ timeout: 30_000 });
-  await expect(gutterGlyph).toBeVisible({ timeout: 30_000 });
-  const targetLineBox = await targetLine.boundingBox();
-  const gutterGlyphBox = await gutterGlyph.boundingBox();
-  if (!targetLineBox || !gutterGlyphBox) {
-    throw new Error("The target line or the gutter glyph is not rendered");
-  }
-  await window.mouse.move(gutterGlyphBox.x + gutterGlyphBox.width / 2, targetLineBox.y + targetLineBox.height / 2);
-  await window.mouse.down();
-  await window.mouse.up();
-
-  // The new thread is the widget without comments; threads added before it are open too.
-  const newThreadWidget = window.locator(".review-widget").filter({ hasNot: window.locator(".review-comment") });
-  await newThreadWidget.locator(".comment-form .monaco-editor").click();
-  await window.keyboard.type(noteText);
-  await newThreadWidget.getByRole("button", { name: "Add Note" }).click();
-  await expect(window.locator(".review-widget .comment-body", { hasText: noteText })).toBeVisible();
-}
 
 /** Runs the command titled `commandTitle` from the command palette and picks `scopeLabel` in the scope pick it opens. */
 async function runPromptCommand(window: Page, commandTitle: string, scopeLabel: string): Promise<void> {
