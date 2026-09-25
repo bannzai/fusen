@@ -22,9 +22,11 @@
   "main": "./out/extension.js",
   "scripts": {
     "build": "tsc -p .",
-    "typecheck": "tsc -p . --noEmit"
+    "typecheck": "tsc -p . --noEmit",
+    "package": "cp ../../LICENSE ../../README.md . && vsce package --no-dependencies"
   },
   "devDependencies": {
-    "@types/vscode": "^1.100.0"
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^4.0.0"
   }
 }
