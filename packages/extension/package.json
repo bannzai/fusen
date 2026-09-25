@@ -54,6 +54,16 @@
         "command": "fusen.deleteThread",
         "title": "Delete Thread",
         "icon": "$(trash)"
+      },
+      {
+        "command": "fusen.approveProposal",
+        "title": "Approve",
+        "icon": "$(check)"
+      },
+      {
+        "command": "fusen.rejectProposal",
+        "title": "Reject",
+        "icon": "$(close)"
       }
     ],
     "menus": {
@@ -85,13 +95,31 @@
         {
           "command": "fusen.deleteThread",
           "when": "false"
+        },
+        {
+          "command": "fusen.approveProposal",
+          "when": "false"
+        },
+        {
+          "command": "fusen.rejectProposal",
+          "when": "false"
         }
       ],
       "comments/commentThread/title": [
         {
           "command": "fusen.deleteThread",
           "group": "navigation",
-          "when": "commentController == fusen && !commentThreadIsEmpty"
+          "when": "commentController == fusen && !commentThreadIsEmpty && commentThread != proposal"
+        },
+        {
+          "command": "fusen.approveProposal",
+          "group": "navigation@1",
+          "when": "commentController == fusen && commentThread == proposal"
+        },
+        {
+          "command": "fusen.rejectProposal",
+          "group": "navigation@2",
+          "when": "commentController == fusen && commentThread == proposal"
         }
       ],
       "comments/commentThread/context": [
@@ -110,12 +138,22 @@
         {
           "command": "fusen.editComment",
           "group": "inline@1",
-          "when": "commentController == fusen"
+          "when": "commentController == fusen && !comment"
         },
         {
           "command": "fusen.deleteComment",
           "group": "inline@2",
-          "when": "commentController == fusen"
+          "when": "commentController == fusen && !comment"
+        },
+        {
+          "command": "fusen.approveProposal",
+          "group": "inline@1",
+          "when": "commentController == fusen && comment == proposal"
+        },
+        {
+          "command": "fusen.rejectProposal",
+          "group": "inline@2",
+          "when": "commentController == fusen && comment == proposal"
         }
       ],
       "comments/comment/context": [

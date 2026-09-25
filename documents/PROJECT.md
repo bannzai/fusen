@@ -66,14 +66,28 @@ Files are written to a temporary file in the same directory and renamed into pla
 
 ### `.fusen/_pending/<id>.json`
 
-Comments an agent writes over MCP wait here until a human approves or rejects them in the editor (implemented in a later issue). One file per proposal, with the same `version` and id rules as threads:
+Comments an agent writes over MCP wait here until a human approves or rejects them in the editor. The MCP server writes only to this directory and never changes `.fusen/threads/`. One file per proposal, with the same `version` and id rules as threads:
 
-- A new thread: the same shape as a thread file, with every comment's `author` set to `agent`. Approving moves it to `.fusen/threads/<id>.json`.
-- A reply to an existing thread: `{ "version": 1, "id": "<proposal id>", "threadId": "<thread id>", "comment": { ... } }`, where `comment` has the fields of `comments[]`. Approving appends the comment to that thread.
+- A new thread: the same shape as a thread file, with every comment's `author` set to `agent`. Approving moves it to `.fusen/threads/<id>.json`, so the proposal id becomes the thread id.
+- A reply to an existing thread: `{ "version": 1, "id": "<proposal id>", "threadId": "<thread id>", "comment": { ... } }`, where `comment` has the fields of `comments[]`, `author` is `agent` and `id` equals the proposal id. Approving appends the comment to that thread.
 
-Rejecting deletes the proposal file.
+Rejecting deletes the proposal file and keeps no record. The approval status an agent reads is derived from the files instead: pending while `.fusen/_pending/<id>.json` exists, approved when a thread has the proposal id as its thread id or as a comment id, and rejected otherwise. The cost is that a proposal whose approved thread or comment was deleted later also reads as rejected; a rejection log would tell the two apart, but it would be one more directory that grows forever for a distinction an agent does not act on differently.
+
+The extension watches `.fusen/_pending/*.json` in every workspace folder and re-reads the directory on each change, so a proposal appears, changes or disappears in the editor as soon as the MCP server or anything else writes it. A proposed thread is shown as its own thread labelled "Pending approval" with approve and reject actions in its header; a proposed reply is shown at the end of the thread it replies to, labelled the same, with the actions on the comment.
 
 Rejected alternatives: a single `.fusen/threads.json` makes the extension and the MCP server overwrite each other's concurrent changes and conflicts on every edit in git, and markdown files per thread (as in Local Code Review) need a parser for metadata that JSON gives for free.
+
+## MCP tools
+
+The server treats its working directory as the workspace folder, so an MCP client registration starts it in the project directory.
+
+| Tool | What it does |
+| --- | --- |
+| `post_comment` | Writes a proposed thread on `file` from `startLine` to `endLine` (1-based, `endLine` defaults to `startLine`). Fails when the path leaves the workspace folder, the file cannot be read, or a line is past the end of the file (counted as the editor counts, so the empty line after a final newline exists) |
+| `reply_to_thread` | Writes a proposed reply to `threadId`. Fails when `.fusen/threads/` has no such thread |
+| `get_proposal_status` | Returns `pending`, `approved` or `rejected` for a proposal id, derived from the files as described under `.fusen/_pending/<id>.json` |
+
+Every tool returns `{ proposalId, status }` as structured content and as JSON text.
 
 ## Rejected options
 
