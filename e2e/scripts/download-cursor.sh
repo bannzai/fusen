@@ -22,7 +22,7 @@
 # Requires curl and jq, and Linux x64 to run the AppImage.
 set -euo pipefail
 
-# The endpoint behind the Linux download button of https://cursor.com/downloads; it answers the newest stable build.
+# Cursor's download API on its own domain; it answers the newest stable build with its version, commit and AppImage URL.
 readonly download_api_url="https://cursor.com/api/download?platform=linux-x64&releaseTrack=stable"
 # The Electron binary inside the AppImage. AppRun only wraps it, and Playwright needs the binary itself.
 readonly executable_relative_path="usr/share/cursor/cursor"
