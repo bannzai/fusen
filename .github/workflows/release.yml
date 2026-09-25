@@ -50,6 +50,7 @@ jobs:
             fi
           done
       - run: npm run package --workspace packages/extension
+      - run: npm run check-vsix --workspace packages/extension
       # Publish by folder path, not with --workspace: npm skips a private workspace without error,
       # while a folder publish fails on `"private": true`, which keeps the package unpublished until that field is removed.
       - name: Publish fusen-mcp to npm
