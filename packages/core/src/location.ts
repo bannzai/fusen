@@ -45,27 +45,48 @@ export function locateCode(fileText: string, code: readonly string[], startLine:
 /**
  * Returns where `lineRange` is after `change`, so that a thread stays on its code while the document is edited.
  * Returns `undefined` when the change replaced every line of the range, because the code the thread was on is gone.
+ *
+ * `lineTextAfterChange` returns the text of a 0-based line of the document right after `change`. With it, a line break
+ * typed into the indentation of a line moves the range with the code, and one typed after the code leaves the range.
+ * Pass it only when `change` is the only change of the edit, because other changes of the same edit also change the document.
+ * Without it, a change is treated as touching the code unless it is at the first character of a line.
  */
-export function moveLineRange(lineRange: LineRange, change: TextChange): LineRange | undefined {
+export function moveLineRange(
+  lineRange: LineRange,
+  change: TextChange,
+  lineTextAfterChange?: (lineIndex: number) => string,
+): LineRange | undefined {
   const { start, end } = change.range;
   const firstLineIndex = lineRange.startLine - 1;
   const lastLineIndex = lineRange.endLine - 1;
-  const lineDelta = splitLines(change.text).length - 1 - (end.line - start.line);
-  // The change ends before the range, or inserts at the very start of its first line: every line of the range moves.
-  if (end.line < firstLineIndex || (end.line === firstLineIndex && end.character === 0)) {
+  const insertedLines = splitLines(change.text);
+  const lineDelta = insertedLines.length - 1 - (end.line - start.line);
+  // Whether only whitespace precedes the change on its first line, and only whitespace follows it on its last line.
+  // The lines around the change keep that text, so it is read from the document after the change.
+  const startsBeforeCode = lineTextAfterChange
+    ? lineTextAfterChange(start.line).slice(0, start.character).trim() === ""
+    : start.character === 0;
+  const endsAfterCode = lineTextAfterChange
+    ? lineTextAfterChange(start.line + insertedLines.length - 1)
+        .slice((insertedLines.length === 1 ? start.character : 0) + insertedLines.at(-1)!.length)
+        .trim() === ""
+    : true;
+  const isInsertion = start.line === end.line && start.character === end.character;
+  // The change ends before the code of the first line: every line of the range moves.
+  if (end.line < firstLineIndex || (end.line === firstLineIndex && (end.character === 0 || (isInsertion && startsBeforeCode)))) {
     return { startLine: lineRange.startLine + lineDelta, endLine: lineRange.endLine + lineDelta };
   }
-  // The change starts after the first character of the last line: the lines it adds or removes come after the range.
-  if (start.line > lastLineIndex || (start.line === lastLineIndex && start.character > 0)) {
+  // The change is after the code of the last line: the lines it adds or removes come after the range.
+  if (start.line > lastLineIndex || (start.line === lastLineIndex && end.line === lastLineIndex && !startsBeforeCode && endsAfterCode)) {
     return lineRange;
   }
-  const replacesFirstLine = start.line < firstLineIndex || (start.line === firstLineIndex && start.character === 0);
+  const replacesFirstLine = start.line < firstLineIndex || (start.line === firstLineIndex && startsBeforeCode);
   if (end.line > lastLineIndex) {
     if (replacesFirstLine) {
       return undefined;
     }
     // The change replaced the end of the range; the range keeps the lines before it.
-    return { startLine: lineRange.startLine, endLine: start.character === 0 ? start.line : start.line + 1 };
+    return { startLine: lineRange.startLine, endLine: startsBeforeCode ? start.line : start.line + 1 };
   }
   return {
     startLine: replacesFirstLine ? start.line + 1 : lineRange.startLine,

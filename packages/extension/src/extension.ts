@@ -129,17 +129,32 @@ export function activate(context: vscode.ExtensionContext): void {
    * Unsaved text is not written, because the stored line numbers must refer to the file that the MCP server and agents read.
    */
   async function place(commentThread: vscode.CommentThread, lineRange: LineRange, fileText: string, saved: boolean): Promise<void> {
+    // The thread was deleted while this change waited in the queue.
+    if (!storedThreads.has(commentThread)) {
+      return;
+    }
+    unlocatedThreads.delete(commentThread);
+    commentThread.range = editorRange(lineRange);
+    if (saved) {
+      await writeLocation(commentThread, lineRange, fileText);
+    } else {
+      render(commentThread);
+    }
+  }
+
+  /**
+   * Writes `lineRange` of `fileText`, the text of the file on disk, and the code on those lines to `.fusen/` if they changed.
+   * The range shown in the editor is left as it is, because edits made after `fileText` was read have already moved it.
+   */
+  async function writeLocation(commentThread: vscode.CommentThread, lineRange: LineRange, fileText: string): Promise<void> {
     const stored = storedThreads.get(commentThread);
     // The thread was deleted while this change waited in the queue.
     if (!stored) {
       return;
     }
-    unlocatedThreads.delete(commentThread);
-    commentThread.range = editorRange(lineRange);
     const code = codeAt(fileText, lineRange);
     const { fusenThread } = stored;
     if (
-      saved &&
       code &&
       (lineRange.startLine !== fusenThread.startLine ||
         lineRange.endLine !== fusenThread.endLine ||
@@ -294,7 +309,13 @@ export function activate(context: vscode.ExtensionContext): void {
           continue;
         }
         const lineRange = contentChanges.reduce<LineRange | undefined>(
-          (movedLineRange, change) => movedLineRange && moveLineRange(movedLineRange, change),
+          (movedLineRange, change) =>
+            movedLineRange &&
+            moveLineRange(
+              movedLineRange,
+              change,
+              contentChanges.length === 1 ? (lineIndex) => document.lineAt(lineIndex).text : undefined,
+            ),
           editorLineRange(commentThread.range),
         );
         if (lineRange) {
@@ -311,7 +332,7 @@ export function activate(context: vscode.ExtensionContext): void {
       for (const commentThread of storedThreadsOn(document.uri)) {
         const range = unlocatedThreads.has(commentThread) ? undefined : commentThread.range;
         changeThreadReportingErrors(commentThread, () =>
-          range ? place(commentThread, editorLineRange(range), text, true) : relocate(commentThread, text, true),
+          range ? writeLocation(commentThread, editorLineRange(range), text) : relocate(commentThread, text, true),
         );
       }
     }),
@@ -320,15 +341,20 @@ export function activate(context: vscode.ExtensionContext): void {
       relocateThreadsOnReportingErrors(document.uri);
     }),
     fileSystemWatcher,
-    ...[fileSystemWatcher.onDidCreate, fileSystemWatcher.onDidChange, fileSystemWatcher.onDidDelete].map((onDidChangeFile) =>
-      onDidChangeFile((uri) => {
-        // An open document follows its file through the document events above: VS Code reloads it when the file changes on disk.
-        if (vscode.workspace.textDocuments.some((textDocument) => textDocument.uri.toString() === uri.toString())) {
-          return;
-        }
-        relocateThreadsOnReportingErrors(uri);
-      }),
-    ),
+    fileSystemWatcher.onDidCreate((uri) => relocateThreadsOnReportingErrors(uri)),
+    fileSystemWatcher.onDidChange((uri) => {
+      // An open document follows its file through the document events above: VS Code reloads it when the file changes on disk.
+      if (vscode.workspace.textDocuments.some((textDocument) => textDocument.uri.toString() === uri.toString())) {
+        return;
+      }
+      relocateThreadsOnReportingErrors(uri);
+    }),
+    fileSystemWatcher.onDidDelete((uri) => {
+      // An open document keeps its text after the file is deleted, so the file is gone even if the document still has the code.
+      for (const commentThread of storedThreadsOn(uri)) {
+        changeThreadReportingErrors(commentThread, () => relocate(commentThread, undefined, true));
+      }
+    }),
     vscode.commands.registerCommand("fusen.createThread", (reply: vscode.CommentReply) =>
       changeThread(reply.thread, async () => {
         const commentThread = reply.thread;

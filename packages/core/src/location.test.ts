@@ -78,6 +78,35 @@ test("moveLineRange returns undefined when the commented lines are deleted", () 
   assert.equal(moveLineRange({ startLine: 5, endLine: 6 }, textChange(2, 0, 8, 0, "replacement\n")), undefined);
 });
 
+test("moveLineRange keeps the code in the range when a line break splits a commented line", () => {
+  // Line 5 (index 4) is `  return a + b;`; each document is the text after Enter with auto-indentation.
+  const lineTextAfterChange = (lines: string[]) => (lineIndex: number) => lines[lineIndex] ?? "";
+  const before = ["", "", "", ""];
+  // In the indentation: the code moves to the next line, and so does the range.
+  assert.deepEqual(
+    moveLineRange({ startLine: 5, endLine: 5 }, textChange(4, 2, 4, 2, "\n  "), lineTextAfterChange([...before, "  ", "  return a + b;"])),
+    { startLine: 6, endLine: 6 },
+  );
+  assert.deepEqual(
+    moveLineRange(
+      { startLine: 5, endLine: 6 },
+      textChange(4, 2, 4, 2, "\n  "),
+      lineTextAfterChange([...before, "  ", "  return a + b;", "}"]),
+    ),
+    { startLine: 6, endLine: 7 },
+  );
+  // After the code: the new line is not part of the range.
+  assert.deepEqual(
+    moveLineRange({ startLine: 5, endLine: 5 }, textChange(4, 15, 4, 15, "\n  "), lineTextAfterChange([...before, "  return a + b;", "  "])),
+    { startLine: 5, endLine: 5 },
+  );
+  // Inside the code: both halves stay in the range.
+  assert.deepEqual(
+    moveLineRange({ startLine: 5, endLine: 5 }, textChange(4, 9, 4, 9, "\n  "), lineTextAfterChange([...before, "  return ", "  a + b;"])),
+    { startLine: 5, endLine: 6 },
+  );
+});
+
 test("moveLineRange applies the changes of one event in order", () => {
   // VS Code lists the edits of several cursors from the bottom up, so each one is applied to the result of the previous.
   const changes = [textChange(9, 0, 9, 0, "\n"), textChange(0, 0, 0, 0, "\n")];
