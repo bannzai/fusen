@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
+import { type InvalidFusenFile, fusenFilePath, fusenIdPattern, isRecord, readFusenDirectory, writeFusenFile } from "./files.js";
 
 /** Who wrote a comment: the person using the editor, or an AI agent writing over MCP. */
 export type FusenCommentAuthor = "human" | "agent";
@@ -33,18 +34,6 @@ export interface FusenThread {
   comments: FusenComment[];
 }
 
-/** A file under `.fusen/threads/` that could not be read as a thread. */
-export interface InvalidThreadFile {
-  /** Absolute path of the file. */
-  path: string;
-  /** Why the file was rejected. */
-  message: string;
-}
-
-// Identifiers become file names, so they are limited to characters that cannot escape the directory.
-const idPattern = /^[A-Za-z0-9_-]+$/;
-const threadFileExtension = ".json";
-
 /** Returns the directory that holds one JSON file per thread for the workspace folder at `workspaceRoot`. */
 export function threadsDirectoryPath(workspaceRoot: string): string {
   return path.join(workspaceRoot, ".fusen", "threads");
@@ -52,10 +41,7 @@ export function threadsDirectoryPath(workspaceRoot: string): string {
 
 /** Returns the path of the file that stores the thread `threadId`. */
 export function threadFilePath(workspaceRoot: string, threadId: string): string {
-  if (!idPattern.test(threadId)) {
-    throw new Error(`Invalid thread id: ${JSON.stringify(threadId)}`);
-  }
-  return path.join(threadsDirectoryPath(workspaceRoot), `${threadId}${threadFileExtension}`);
+  return fusenFilePath(threadsDirectoryPath(workspaceRoot), threadId);
 }
 
 /** Returns a new identifier for a thread or a comment. */
@@ -71,7 +57,7 @@ export function parseThread(value: unknown): FusenThread {
   if (value.version !== 1) {
     throw new Error(`Unsupported thread version: ${JSON.stringify(value.version)}`);
   }
-  if (typeof value.id !== "string" || !idPattern.test(value.id)) {
+  if (typeof value.id !== "string" || !fusenIdPattern.test(value.id)) {
     throw new Error(`Invalid thread id: ${JSON.stringify(value.id)}`);
   }
   if (typeof value.file !== "string" || !isWorkspaceRelativePath(value.file)) {
@@ -100,29 +86,9 @@ export function parseThread(value: unknown): FusenThread {
  */
 export async function readThreads(
   workspaceRoot: string,
-): Promise<{ threads: FusenThread[]; invalidFiles: InvalidThreadFile[] }> {
-  const directoryPath = threadsDirectoryPath(workspaceRoot);
-  const fileNames = await readdir(directoryPath).catch((error: unknown) => {
-    if (isErrnoException(error) && error.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  });
-  const threads: FusenThread[] = [];
-  const invalidFiles: InvalidThreadFile[] = [];
-  for (const fileName of fileNames.filter((name) => name.endsWith(threadFileExtension)).sort()) {
-    const filePath = path.join(directoryPath, fileName);
-    try {
-      const thread = parseThread(JSON.parse(await readFile(filePath, "utf8")));
-      if (`${thread.id}${threadFileExtension}` !== fileName) {
-        throw new Error(`Thread id ${thread.id} does not match the file name`);
-      }
-      threads.push(thread);
-    } catch (error) {
-      invalidFiles.push({ path: filePath, message: error instanceof Error ? error.message : String(error) });
-    }
-  }
-  return { threads, invalidFiles };
+): Promise<{ threads: FusenThread[]; invalidFiles: InvalidFusenFile[] }> {
+  const { values, invalidFiles } = await readFusenDirectory(threadsDirectoryPath(workspaceRoot), parseThread);
+  return { threads: values, invalidFiles };
 }
 
 /**
@@ -132,11 +98,7 @@ export async function readThreads(
  */
 export async function writeThread(workspaceRoot: string, thread: FusenThread): Promise<void> {
   const validThread = parseThread(thread);
-  const filePath = threadFilePath(workspaceRoot, validThread.id);
-  await mkdir(path.dirname(filePath), { recursive: true });
-  const temporaryFilePath = `${filePath}.${randomUUID()}.tmp`;
-  await writeFile(temporaryFilePath, `${JSON.stringify(validThread, null, 2)}\n`, "utf8");
-  await rename(temporaryFilePath, filePath);
+  await writeFusenFile(threadFilePath(workspaceRoot, validThread.id), validThread);
 }
 
 /** Deletes the file of the thread `threadId`. Deleting a thread that has no file succeeds. */
@@ -145,11 +107,11 @@ export async function deleteThread(workspaceRoot: string, threadId: string): Pro
 }
 
 /** Validates parsed JSON as a comment and returns it with only the known fields. */
-function parseComment(value: unknown): FusenComment {
+export function parseComment(value: unknown): FusenComment {
   if (!isRecord(value)) {
     throw new Error("A comment must be an object");
   }
-  if (typeof value.id !== "string" || !idPattern.test(value.id)) {
+  if (typeof value.id !== "string" || !fusenIdPattern.test(value.id)) {
     throw new Error(`Invalid comment id: ${JSON.stringify(value.id)}`);
   }
   if (typeof value.body !== "string") {
@@ -162,11 +124,6 @@ function parseComment(value: unknown): FusenComment {
     throw new Error(`Comment ${value.id} has an invalid createdAt: ${JSON.stringify(value.createdAt)}`);
   }
   return { id: value.id, body: value.body, author: value.author, createdAt: value.createdAt };
-}
-
-/** Returns whether `value` is a plain JSON object. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Returns whether `value` is a 1-based line number. */
@@ -183,9 +140,4 @@ function isWorkspaceRelativePath(filePath: string): boolean {
     !/^[A-Za-z]:/.test(filePath) &&
     filePath.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..")
   );
-}
-
-/** Returns whether `error` is a Node.js system error that carries a `code`. */
-function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }
