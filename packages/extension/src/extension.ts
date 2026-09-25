@@ -273,34 +273,48 @@ export function deactivate(): void {}
  * Returns `undefined` when the person dismisses a pick or there is no workspace folder.
  */
 async function pickPromptThreads(): Promise<{ workspaceRoot: string; threads: FusenThread[] } | undefined> {
-  const activeFileUri = vscode.window.activeTextEditor?.document.uri;
-  const activeWorkspaceFolder =
-    activeFileUri?.scheme === "file" ? vscode.workspace.getWorkspaceFolder(activeFileUri) : undefined;
+  const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+  const editorUri = vscode.window.activeTextEditor?.document.uri;
+  const activeFileUri = editorUri?.scheme === "file" ? editorUri : undefined;
+  // With nested workspace folders, every folder that contains the file can store threads on it,
+  // not only the innermost one that `getWorkspaceFolder` returns.
+  const activeFileWorkspaceFolders = activeFileUri
+    ? workspaceFolders.filter((workspaceFolder) => relativeFilePath(workspaceFolder, activeFileUri) !== undefined)
+    : [];
   const scope = await vscode.window.showQuickPick(
     [
-      { label: "All comments", file: undefined },
+      { label: "All comments", currentFile: false },
       // Offered only for a file that can have threads, that is, one inside a workspace folder.
-      ...(activeFileUri && activeWorkspaceFolder
+      ...(activeFileUri && activeFileWorkspaceFolders.length > 0
         ? [
             {
               label: "Comments in the current file",
-              file: path.relative(activeWorkspaceFolder.uri.fsPath, activeFileUri.fsPath).split(path.sep).join("/"),
+              description: vscode.workspace.asRelativePath(activeFileUri),
+              currentFile: true,
             },
           ]
         : []),
-    ].map((item) => ({ ...item, description: item.file })),
+    ],
     { placeHolder: "Comments to include in the prompt" },
   );
   if (!scope) {
     return undefined;
   }
   // Each workspace folder has its own `.fusen/` and relative paths, so one prompt covers one folder.
+  const candidateWorkspaceFolders = scope.currentFile ? activeFileWorkspaceFolders : workspaceFolders;
   const workspaceFolder =
-    scope.file !== undefined
-      ? activeWorkspaceFolder
-      : vscode.workspace.workspaceFolders?.length === 1
-        ? vscode.workspace.workspaceFolders[0]
-        : await vscode.window.showWorkspaceFolderPick({ placeHolder: "Workspace folder of the comments" });
+    candidateWorkspaceFolders.length === 1
+      ? candidateWorkspaceFolders[0]
+      : (
+          await vscode.window.showQuickPick(
+            candidateWorkspaceFolders.map((candidate) => ({
+              label: candidate.name,
+              description: candidate.uri.fsPath,
+              workspaceFolder: candidate,
+            })),
+            { placeHolder: "Workspace folder of the comments" },
+          )
+        )?.workspaceFolder;
   if (!workspaceFolder) {
     return undefined;
   }
@@ -308,10 +322,20 @@ async function pickPromptThreads(): Promise<{ workspaceRoot: string; threads: Fu
   for (const invalidFile of invalidFiles) {
     void vscode.window.showWarningMessage(`Fusen skipped ${invalidFile.path}: ${invalidFile.message}`);
   }
+  const activeFile = scope.currentFile && activeFileUri ? relativeFilePath(workspaceFolder, activeFileUri) : undefined;
   return {
     workspaceRoot: workspaceFolder.uri.fsPath,
-    threads: scope.file === undefined ? threads : threads.filter((thread) => thread.file === scope.file),
+    threads: activeFile === undefined ? threads : threads.filter((thread) => thread.file === activeFile),
   };
+}
+
+/** Returns the path of `fileUri` relative to `workspaceFolder` as stored in a thread, or `undefined` when the file is outside it. */
+function relativeFilePath(workspaceFolder: vscode.WorkspaceFolder, fileUri: vscode.Uri): string | undefined {
+  const relativePath = path.relative(workspaceFolder.uri.fsPath, fileUri.fsPath);
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+    return undefined;
+  }
+  return relativePath.split(path.sep).join("/");
 }
 
 /** Returns a new comment written by the person using the editor. */
