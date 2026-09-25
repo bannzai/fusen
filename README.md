@@ -104,6 +104,41 @@ codex mcp add fusen -- node "$PWD/packages/mcp-server/dist/index.js" --workspace
 
 In `.mcp.json` or `.codex/config.toml`, use `"command": "node"` / `command = "node"` with the absolute path of `packages/mcp-server/dist/index.js` as the first argument, followed by `--workspace <path>` for Codex CLI.
 
+## Usage
+
+The screenshots below are taken by the E2E tests in `e2e/tests/`.
+
+### Add a note from the gutter
+
+Hover over the gutter next to a line and click `+` (drag in the gutter to cover several lines), write the note in markdown and click **Add Note**. The note is saved to `.fusen/threads/` in the workspace and comes back when the workspace is opened again. Reply, edit or delete a note from its thread; the Comments panel lists every note.
+
+![A note on line 6 of sample.ts, added from the gutter](documents/images/add-note.png)
+
+A note stays on its code while the file changes: edits above it move it, and changes made outside the editor (a git checkout, an agent rewriting the file) are followed by finding its code again. When the code is gone, the note is labelled "Location unknown".
+
+### Hand the notes to an agent as a prompt
+
+Run one of these from the command palette and choose the comments in the current file or all comments:
+
+- `Fusen: Copy comments as prompt` puts one markdown prompt on the clipboard, to paste into Claude Code or Codex CLI
+- `Fusen: Export comments as prompt to .fusen/prompt.md` writes the same prompt to `.fusen/prompt.md` and opens it, so that you can tell the agent to read that file
+
+Each section of the prompt is `<file>:<line>`, the code on those lines and the comments on it. An agent with the MCP server registered can also read the notes itself with the `list_comments` and `get_prompt` tools.
+
+![The exported prompt in .fusen/prompt.md](documents/images/export-prompt.png)
+
+### Approve or reject the agent's comments
+
+Once the MCP server is registered (see "Register the MCP server"), ask the agent to review your code with Fusen, for example "Review src/sample.ts and leave your comments with Fusen". Its comments arrive on their lines labelled "Pending approval". Click the check mark to approve a comment, which turns it into a regular note, or the cross to reject it, which deletes it. Nothing the agent writes becomes a note without your approval; the agent can check the outcome with `get_proposal_status`.
+
+![Two comments from an agent waiting for approval](documents/images/agent-proposals.png)
+
+![The approved comment is a regular note and the rejected one is gone](documents/images/agent-proposal-approved.png)
+
+## Privacy
+
+Fusen collects no data and sends nothing over the network. The extension and the MCP server only read and write files in your workspace: notes are stored in its `.fusen/` directory and nowhere else. There is no account, telemetry or analytics. Notes you hand to an AI agent, as a prompt or over MCP, go wherever that agent sends what it reads. Commit `.fusen/` to share notes through the repository, or add it to `.gitignore` to keep them local.
+
 ## Development
 
 ```sh
@@ -122,7 +157,7 @@ Design notes: [documents/PROJECT.md](documents/PROJECT.md)
 
 `.github/workflows/release.yml` publishes a release when a `v<version>` tag is pushed:
 
-1. Set the same `version` in `packages/extension/package.json` and `packages/mcp-server/package.json`. For the first npm release, also remove `"private": true` from `packages/mcp-server/package.json`; while it is there, publishing fails.
+1. Set the same `version` in `packages/extension/package.json` and `packages/mcp-server/package.json`, and add its changes to `CHANGELOG.md`.
 2. Push the tag, for example `git tag v0.1.0 && git push origin v0.1.0`. The workflow checks the versions against the tag, publishes `fusen-mcp` to npm with the `NPM_TOKEN` secret, and creates a GitHub release with the VSIX attached.
 
 Running the workflow manually (`gh workflow run release.yml --ref <branch>`) is a dry run: it packages the VSIX and runs `npm publish --dry-run` without creating a release.
