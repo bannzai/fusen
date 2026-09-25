@@ -152,7 +152,7 @@ Run one of these from the command palette and choose the comments in the current
 - `Fusen: Copy comments as prompt` puts one markdown prompt on the clipboard, to paste into Claude Code or Codex CLI
 - `Fusen: Export comments as prompt to .fusen/prompt.md` writes the same prompt to `.fusen/prompt.md` and opens it, so that you can tell the agent to read that file
 
-Each section of the prompt is `<file>:<line>`, the code on those lines and the comments on it. An agent with the MCP server registered can also read the notes itself with the `list_comments` and `get_prompt` tools.
+Each section of the prompt is `<file>:<line>`, the code on those lines and the comments on it. In a git repository, each comment also records the commit and whether the file had staged or unstaged changes or was untracked when the comment was posted, and the prompt shows them in one line above the comment's text. An agent with the MCP server registered can also read the notes itself with the `list_comments` and `get_prompt` tools; `list_comments` returns that git state as each comment's `git`.
 
 ![The exported prompt in .fusen/prompt.md](documents/images/export-prompt.png)
 

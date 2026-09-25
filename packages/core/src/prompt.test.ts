@@ -118,6 +118,45 @@ This line was deleted
   );
 });
 
+test("createPrompt puts the commit and the state of the file between the author and the body of a comment with a git state", async () => {
+  const workspaceRoot = await createWorkspace({ "sample.ts": sampleSource });
+  const commit = "0b6c1e0a3f7e4a539d536a2d8f1c9e4100000000";
+  const comments: FusenComment[] = [
+    { ...comment("c1", "Clean"), git: { commit, branch: "main", staged: false, unstaged: false, untracked: false } },
+    { ...comment("c2", "Staged"), git: { commit, branch: "feature/a_b", staged: true, unstaged: false, untracked: false } },
+    { ...comment("c3", "Unstaged", "agent"), git: { commit, staged: false, unstaged: true, untracked: false } },
+    { ...comment("c4", "Both"), git: { commit, branch: "main", staged: true, unstaged: true, untracked: false } },
+    { ...comment("c5", "Untracked"), git: { commit, branch: "main", staged: false, unstaged: false, untracked: true } },
+    comment("c6", "No git"),
+  ];
+
+  const prompt = await createPrompt(workspaceRoot, [thread("t1", "sample.ts", 6, 6, comments)]);
+  assert.ok(
+    prompt.endsWith(
+      [
+        "**Human:**",
+        "_Posted at commit `0b6c1e0` on branch `main`, when the file had no uncommitted changes._",
+        "Clean",
+        "**Human:**",
+        "_Posted at commit `0b6c1e0` on branch `feature/a_b`, when the file had staged changes._",
+        "Staged",
+        "**Agent:**",
+        "_Posted at commit `0b6c1e0` (detached HEAD), when the file had unstaged changes._",
+        "Unstaged",
+        "**Human:**",
+        "_Posted at commit `0b6c1e0` on branch `main`, when the file had staged and unstaged changes._",
+        "Both",
+        "**Human:**",
+        "_Posted at commit `0b6c1e0` on branch `main`, when the file was untracked._",
+        "Untracked",
+        "**Human:**",
+        "No git\n",
+      ].join("\n\n"),
+    ),
+    prompt,
+  );
+});
+
 test("createPrompt says there are no comments when there are no threads", async () => {
   assert.equal(await createPrompt(await createWorkspace({}), []), "# Fusen comments\n\nThere are no comments.\n");
 });

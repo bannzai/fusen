@@ -18,6 +18,7 @@ import {
   pendingDirectoryPath,
   pendingProposalFilePath,
   promptFilePath,
+  readGitState,
   readPendingProposals,
   readThread,
   readThreads,
@@ -715,16 +716,17 @@ export function activate(context: vscode.ExtensionContext): void {
         if (code) {
           editorCodes.set(commentThread, code);
         }
+        const file = path.relative(workspaceFolder.uri.fsPath, commentThread.uri.fsPath).split(path.sep).join("/");
         await save(commentThread, {
           workspaceRoot: workspaceFolder.uri.fsPath,
           fusenThread: {
             version: 1,
             id: createFusenId(),
-            file: path.relative(workspaceFolder.uri.fsPath, commentThread.uri.fsPath).split(path.sep).join("/"),
+            file,
             ...lineRange,
             // Unsaved code is not in the file on disk, so it is left out until saving the document writes the code of the lines.
             code: document.isDirty ? undefined : code,
-            comments: [humanComment(reply.text)],
+            comments: [await humanComment(workspaceFolder.uri.fsPath, file, reply.text)],
           },
         });
       }),
@@ -734,7 +736,10 @@ export function activate(context: vscode.ExtensionContext): void {
         const { workspaceRoot, fusenThread } = storedThread(reply.thread);
         await save(reply.thread, {
           workspaceRoot,
-          fusenThread: { ...fusenThread, comments: [...fusenThread.comments, humanComment(reply.text)] },
+          fusenThread: {
+            ...fusenThread,
+            comments: [...fusenThread.comments, await humanComment(workspaceRoot, fusenThread.file, reply.text)],
+          },
         });
       }),
     ),
@@ -930,9 +935,18 @@ function relativeFilePath(workspaceFolder: vscode.WorkspaceFolder, fileUri: vsco
   return relativePath.split(path.sep).join("/");
 }
 
-/** Returns a new comment written by the person using the editor. */
-function humanComment(body: string): FusenComment {
-  return { id: createFusenId(), body, author: "human", createdAt: new Date().toISOString() };
+/**
+ * Returns a new comment written by the person using the editor on `file` of the workspace folder at `workspaceRoot`,
+ * with the git state of the file as it is on disk now.
+ */
+async function humanComment(workspaceRoot: string, file: string, body: string): Promise<FusenComment> {
+  return {
+    id: createFusenId(),
+    body,
+    author: "human",
+    createdAt: new Date().toISOString(),
+    git: await readGitState(workspaceRoot, file),
+  };
 }
 
 /** Returns how `fusenComment` is shown in the editor when it is not being edited. */

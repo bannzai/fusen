@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
@@ -98,6 +99,15 @@ async function callProposalTool(client: Client, name: string, toolArguments: Rec
   const result = await client.callTool({ name, arguments: toolArguments });
   assert.equal(result.isError, undefined, JSON.stringify(result.content));
   return result.structuredContent as unknown as ProposalOutput;
+}
+
+/** Runs git with `args` in `directoryPath`, without the user's git configuration, and returns its output without the final line break. */
+function git(directoryPath: string, args: string[]): string {
+  return execFileSync(
+    "git",
+    ["-c", "user.name=Fusen Test", "-c", "user.email=fusen@example.com", "-c", "commit.gpgsign=false", ...args],
+    { cwd: directoryPath, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } },
+  ).trimEnd();
 }
 
 /** Creates a temporary directory that stands in for a workspace folder, holding `src/sample.ts` with three lines of code. */
@@ -312,6 +322,47 @@ test("get_prompt returns the prompt the extension exports, for every thread or t
     assert.deepEqual(rest, []);
     assert.equal((await readPrompt({ file: "src/sample.ts" }))[0], await createPrompt(workspaceRoot, [sampleThread]));
     assert.equal((await client.callTool({ name: "get_prompt", arguments: { file: "../outside.ts" } })).isError, true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("post_comment and reply_to_thread record the git state of the file, which list_comments and get_prompt return", async () => {
+  const workspaceRoot = await createWorkspace();
+  git(workspaceRoot, ["init", "--initial-branch=main"]);
+  git(workspaceRoot, ["add", "."]);
+  git(workspaceRoot, ["commit", "-m", "Initial commit"]);
+  const commit = git(workspaceRoot, ["rev-parse", "HEAD"]);
+  const sampleFilePath = path.join(workspaceRoot, "src", "sample.ts");
+  await writeFile(sampleFilePath, `${await readFile(sampleFilePath, "utf8")}// Not committed\n`, "utf8");
+  const gitState = { commit, branch: "main", staged: false, unstaged: true, untracked: false };
+  const client = await connectClient(workspaceRoot);
+  try {
+    const { proposalId } = await callProposalTool(client, "post_comment", { file: "src/sample.ts", startLine: 2, body: "Use sum" });
+    const pendingFile = JSON.parse(await readFile(path.join(workspaceRoot, ".fusen", "_pending", `${proposalId}.json`), "utf8")) as FusenThread;
+    assert.deepEqual(pendingFile.comments[0]?.git, gitState);
+    const { pendingProposals } = await callCommentsTool(client, "list_comments", {});
+    const [proposal] = pendingProposals;
+    assert.ok(proposal && !isPendingReply(proposal) && pendingProposals.length === 1);
+    assert.deepEqual(proposal.comments[0]?.git, gitState);
+
+    // Approving moves the proposed thread into .fusen/threads/ as it is, as the extension does.
+    await writeThread(workspaceRoot, proposal);
+    await deletePendingProposal(workspaceRoot, proposalId);
+    await callProposalTool(client, "reply_to_thread", { threadId: proposalId, body: "Also rename the parameters" });
+    const [reply] = (await callCommentsTool(client, "list_comments", { status: "pending" })).pendingProposals;
+    assert.ok(reply && isPendingReply(reply));
+    assert.deepEqual(reply.comment.git, gitState);
+
+    const result = await client.callTool({ name: "get_prompt", arguments: {} });
+    assert.equal(result.isError, undefined, JSON.stringify(result.content));
+    const [prompt] = (result.content as unknown as { type: string; text: string }[]).map((content) => content.text);
+    assert.ok(
+      prompt?.includes(
+        `**Agent:**\n\n_Posted at commit \`${commit.slice(0, 7)}\` on branch \`main\`, when the file had unstaged changes._\n\nUse sum`,
+      ),
+      prompt,
+    );
   } finally {
     await client.close();
   }
