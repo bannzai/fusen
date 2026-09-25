@@ -33,7 +33,7 @@ To build the VSIX yourself from a clone: `npm ci && npm run build && npm run pac
 
 ## Register the MCP server
 
-The server is one JavaScript file, `fusen-mcp.js`, that runs with Node.js 22 or later and needs no npm install. Download it from a GitHub release (https://github.com/bannzai/fusen/releases) and keep it where it can stay, for example `~/.fusen`:
+The server is one JavaScript file, `fusen-mcp.js`, that runs with Node.js 22.7 or later and needs no npm install. It is an ES module that Node.js recognizes by its `import` statements (syntax detection, on by default since Node.js 22.7), so keep it out of any directory whose `package.json` sets `"type": "commonjs"`. Download it from a GitHub release (https://github.com/bannzai/fusen/releases) and keep it where it can stay, for example `~/.fusen`:
 
 ```sh
 gh release download --repo bannzai/fusen --pattern fusen-mcp.js --dir ~/.fusen
