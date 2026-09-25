@@ -1,5 +1,6 @@
 // Checks that the packaged VSIX runs on its own: the extension entry point must contain the bundled fusen-core code
 // and must not require any module other than `vscode` and Node built-ins, because the VSIX ships no node_modules.
+// Also checks that the VSIX holds the icon and the license, and no sources, source maps, tests or build settings.
 //
 // Usage: node scripts/check-vsix.mjs [path/to/fusen-<version>.vsix]
 // Default path: fusen-<version>.vsix in the current directory, named after package.json like `vsce package` does.
@@ -42,6 +43,19 @@ for (const moduleName of requiredModules) {
   }
 }
 
+const entryNames = execFileSync("unzip", ["-Z1", vsixPath], { encoding: "utf8" }).split("\n").filter(Boolean);
+// vsce stores a license file without an extension as LICENSE.txt.
+const requiredEntries = [`extension/${manifest.icon}`, "extension/LICENSE.txt"];
+for (const requiredEntry of requiredEntries) {
+  if (!entryNames.includes(requiredEntry)) {
+    failures.push(`the VSIX does not contain ${requiredEntry}`);
+  }
+}
+const unwantedEntryPattern = /(\.map|\.ts|\.(test|spec)\.[cm]?js|\/tsconfig\.json)$|^extension\/(src|scripts|node_modules)\//;
+for (const entryName of entryNames.filter((name) => unwantedEntryPattern.test(name))) {
+  failures.push(`the VSIX contains ${entryName}, which the extension does not need at run time`);
+}
+
 if (failures.length > 0) {
   for (const failure of failures) {
     console.error(`error: ${failure}`);
@@ -51,3 +65,4 @@ if (failures.length > 0) {
 console.log(
   `${vsixPath}: ${entryPath} bundles ${fusenCoreFunctions.join(", ")} and requires only ${[...requiredModules].sort().join(", ")}`,
 );
+console.log(`${vsixPath} contains:\n${entryNames.map((entryName) => `  ${entryName}`).join("\n")}`);

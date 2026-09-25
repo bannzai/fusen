@@ -344,10 +344,19 @@ test("the workspace folder is --workspace, then CLAUDE_PROJECT_DIR, then the wor
   assert.deepEqual(await readThreadIds({ args: ["--workspace", "nested"] }), ["in-nested"]);
 });
 
-test("the npm package holds only the bundled bin, which imports nothing but Node built-ins and its dependencies", async () => {
+test("the npm package holds the license, the README and only the bundled bin, which imports nothing but Node built-ins and its dependencies", async () => {
   const { stdout } = await promisify(execFile)("npm", ["pack", "--dry-run", "--json"], { cwd: packageDirectoryPath });
   const [packResult] = JSON.parse(stdout) as { files: { path: string }[] }[];
-  const javaScriptFiles = (packResult?.files ?? []).map((file) => file.path).filter((filePath) => /\.[cm]?js$/.test(filePath));
+  const packedFiles = (packResult?.files ?? []).map((file) => file.path);
+  for (const requiredFile of ["LICENSE", "README.md"]) {
+    assert.ok(packedFiles.includes(requiredFile), `${requiredFile} is not in the package: ${packedFiles.join(", ")}`);
+  }
+  assert.deepEqual(
+    packedFiles.filter((filePath) => /\.(map|ts)$/.test(filePath)),
+    [],
+    "the package contains sources or source maps",
+  );
+  const javaScriptFiles = packedFiles.filter((filePath) => /\.[cm]?js$/.test(filePath));
   assert.deepEqual(javaScriptFiles, [packageManifest.bin["fusen-mcp"]]);
   assert.ok(!("fusen-core" in packageManifest.dependencies) && "fusen-core" in packageManifest.devDependencies);
 
