@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { readThreads, writeThread } from "fusen-core";
-import { launchVSCode } from "../launch";
+import { launchVSCode, vscodeStartupTimeoutMs } from "../launch";
 
 const fixtureWorkspacePath = path.resolve(__dirname, "../fixtures/workspace");
 
@@ -19,7 +19,7 @@ test("a note added from the gutter is saved to .fusen/ and restored after a rest
 
   const firstApp = await launchVSCode(launchOptions);
   try {
-    const window = await firstApp.firstWindow();
+    const window = await firstApp.firstWindow({ timeout: vscodeStartupTimeoutMs });
     await expect(window.locator(".statusbar-item", { hasText: "Fusen" })).toBeVisible({ timeout: 60_000 });
 
     // The gutter glyph column is shared by all lines, so click it at the height of the target line.
@@ -59,7 +59,7 @@ test("a note added from the gutter is saved to .fusen/ and restored after a rest
 
   const secondApp = await launchVSCode(launchOptions);
   try {
-    const window = await secondApp.firstWindow();
+    const window = await secondApp.firstWindow({ timeout: vscodeStartupTimeoutMs });
     await expect(window.locator(".review-widget .comment-body", { hasText: noteText })).toBeVisible({ timeout: 60_000 });
     await window.screenshot({ path: testInfo.outputPath("thread-restored.png") });
   } finally {
@@ -83,7 +83,7 @@ test("replies, comment edits and deletions in a thread are saved to .fusen/", as
 
   const app = await launchVSCode({ profilePath, workspacePath, filePath: path.join(workspacePath, "sample.ts") });
   try {
-    const window = await app.firstWindow();
+    const window = await app.firstWindow({ timeout: vscodeStartupTimeoutMs });
     const reviewWidget = window.locator(".review-widget", { hasText: "Use a template literal" });
     await expect(reviewWidget).toBeVisible({ timeout: 60_000 });
 
