@@ -412,6 +412,15 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  /** Shows the comments of the proposed thread `proposal`, stored in `proposalFilePath`, in its editor thread `commentThread`. */
+  function renderProposalThread(commentThread: vscode.CommentThread, proposalFilePath: string, proposal: FusenThread): void {
+    commentThread.comments = proposal.comments.map((fusenComment): FusenProposalEditorComment => ({
+      fusenProposalFilePath: proposalFilePath,
+      ...commentView(fusenComment),
+      contextValue: proposedThreadCommentContextValue,
+    }));
+  }
+
   /** Removes the editor thread of the proposed thread in `proposalFilePath`, if it is shown. */
   function removeProposalThread(proposalFilePath: string): void {
     proposalThreads.get(proposalFilePath)?.dispose();
@@ -474,11 +483,7 @@ export function activate(context: vscode.ExtensionContext): void {
         commentThread.label = pendingLabel;
         commentThread.contextValue = proposalContextValue;
         commentThread.canReply = false;
-        commentThread.comments = proposal.comments.map((fusenComment): FusenProposalEditorComment => ({
-          fusenProposalFilePath: proposalFilePath,
-          ...commentView(fusenComment),
-          contextValue: proposedThreadCommentContextValue,
-        }));
+        renderProposalThread(commentThread, proposalFilePath, proposal);
         proposalThreads.set(proposalFilePath, commentThread);
       }
     }
@@ -656,6 +661,21 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidOpenTextDocument((document) => {
       // Edits discarded when the document was closed without saving may have moved its threads.
       relocateThreadsOnReportingErrors(document.uri);
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      // The author names come from the settings, so the open threads are shown again with the new names.
+      if (!event.affectsConfiguration("fusen.humanName") && !event.affectsConfiguration("fusen.agentName")) {
+        return;
+      }
+      for (const commentThread of storedThreads.keys()) {
+        render(commentThread);
+      }
+      for (const [proposalFilePath, commentThread] of proposalThreads) {
+        const proposal = storedProposals.get(proposalFilePath)?.proposal;
+        if (proposal && !isPendingReply(proposal)) {
+          renderProposalThread(commentThread, proposalFilePath, proposal);
+        }
+      }
     }),
     fileSystemWatcher,
     fileSystemWatcher.onDidCreate((uri) => relocateThreadsOnReportingErrors(uri)),
@@ -917,9 +937,19 @@ function commentView(fusenComment: FusenComment): Pick<vscode.Comment, "body" | 
   return {
     body: new vscode.MarkdownString(fusenComment.body),
     mode: vscode.CommentMode.Preview,
-    author: { name: fusenComment.author === "human" ? "Human" : "Agent" },
+    author: { name: authorName(fusenComment.author) },
     timestamp: new Date(fusenComment.createdAt),
   };
+}
+
+/**
+ * Returns the name shown as the author of a comment written by `author`, from the `fusen.humanName` and `fusen.agentName` settings.
+ * The stored `author` stays `human` or `agent`; the settings only change what the editor shows.
+ */
+function authorName(author: FusenComment["author"]): string {
+  const configuration = vscode.workspace.getConfiguration("fusen");
+  // An empty setting, the default, shows the names Fusen showed before the settings existed.
+  return author === "human" ? configuration.get<string>("humanName") || "Human" : configuration.get<string>("agentName") || "Agent";
 }
 
 /** Returns a handler that shows a failure of Fusen's background work with `summary`, instead of leaving it unhandled. */
