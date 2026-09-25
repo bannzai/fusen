@@ -668,6 +668,10 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       for (const commentThread of storedThreads.keys()) {
+        // VS Code updates the body, label and timestamp of a comment it already shows, but not its author (checked in 1.139.1),
+        // so the comments are rendered as new objects, which VS Code shows as new comments. A comment being edited keeps its
+        // object, and with it the unsaved text and the old name.
+        commentThread.comments = commentThread.comments.filter((comment) => comment.mode === vscode.CommentMode.Editing);
         render(commentThread);
       }
       for (const [proposalFilePath, commentThread] of proposalThreads) {
