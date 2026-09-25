@@ -39,7 +39,7 @@ const proposalOutputSchema = {
  * Agents write only to `.fusen/_pending/`; a human approves or rejects each proposal in the editor.
  */
 export function createServer(workspaceRoot: string): McpServer {
-  const server = new McpServer({ name: "fusen", version: "0.0.1" });
+  const server = new McpServer({ name: "fusen", version: "0.2.0" });
 
   server.registerTool(
     "post_comment",
