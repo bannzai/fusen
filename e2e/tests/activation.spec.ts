@@ -11,6 +11,7 @@ test("Fusen activates in VS Code", async ({}, testInfo) => {
   const profilePath = mkdtempSync(path.join(tmpdir(), "fusen-e2e-"));
   const app = await electron.launch({
     executablePath: await downloadAndUnzipVSCode("stable"),
+    timeout: 120_000,
     args: [
       "--no-sandbox",
       "--disable-gpu-sandbox",
@@ -26,7 +27,7 @@ test("Fusen activates in VS Code", async ({}, testInfo) => {
     ],
   });
   try {
-    const window = await app.firstWindow();
+    const window = await app.firstWindow({ timeout: 120_000 });
     await expect(window.locator(".statusbar-item", { hasText: "Fusen" })).toBeVisible({ timeout: 60_000 });
     await window.screenshot({ path: testInfo.outputPath("activation.png") });
   } finally {
