@@ -25,7 +25,8 @@ jobs:
     permissions:
       contents: write
     env:
-      IS_TAG: ${{ github.ref_type == 'tag' }}
+      # A manual run on a tag also has ref_type 'tag', so the event is checked too to keep manual runs dry.
+      IS_RELEASE: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -37,7 +38,7 @@ jobs:
       - run: npm run build
       - run: npm test
       - name: Check that the tag matches the package versions
-        if: env.IS_TAG == 'true'
+        if: env.IS_RELEASE == 'true'
         run: |
           for package_dir in packages/extension packages/mcp-server; do
             package_version=$(node -p "require('./$package_dir/package.json').version")
@@ -51,7 +52,7 @@ jobs:
       # while a folder publish fails on `"private": true`, which keeps the package unpublished until that field is removed.
       - name: Publish fusen-mcp to npm
         run: |
-          if [ "$IS_TAG" = "true" ]; then
+          if [ "$IS_RELEASE" = "true" ]; then
             npm publish ./packages/mcp-server --access public
           else
             npm publish ./packages/mcp-server --access public --dry-run
@@ -59,7 +60,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Attach the VSIX to a GitHub release
-        if: env.IS_TAG == 'true'
+        if: env.IS_RELEASE == 'true'
         run: gh release create "$GITHUB_REF_NAME" packages/extension/*.vsix --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

@@ -15,17 +15,20 @@
 #   --find-timeout  How long to keep looking for a run that has not been created yet. Default: 120.
 #
 # Output on stdout, one KEY=value per line:
-#   RUN_ID, RUN_URL, CONCLUSION, DIR, then SCREENSHOT=<path> for each PNG,
-#   and FAILED_LOG_COMMAND=<command> when the run did not succeed.
+#   RUN_ID, RUN_URL, CONCLUSION, FAILED_LOG_COMMAND=<command> when the run did not succeed,
+#   then DIR and SCREENSHOT=<path> for each PNG once the artifact is downloaded.
 # Progress goes to stderr.
 #
 # Exit codes:
-#   0  the run succeeded
-#   1  the run finished without success (screenshots are still listed when the artifact exists)
+#   0  the run succeeded and its artifact is downloaded
+#   1  the run finished without success; its artifact is downloaded and the screenshots are listed
 #   2  invalid arguments
 #   3  no run was found, or a gh / git command failed
+#   4  the run finished, but its artifact could not be downloaded (missing, expired, or a network error);
+#      nothing is listed and the next call tries the download again
 #
-# Idempotent: a run whose artifact directory already has files is not downloaded again.
+# Idempotent: a run whose artifact directory exists is not downloaded again; the directory is created only
+# after a complete download.
 # Requires gh (authenticated), git and jq.
 set -euo pipefail
 
@@ -149,22 +152,31 @@ run_json="$(gh run view "$run_id" --json conclusion,url)" || fail_run "gh run vi
 conclusion="$(jq -r '.conclusion' <<<"$run_json")"
 run_url="$(jq -r '.url' <<<"$run_json")"
 
-dir="$out_root/e2e-$run_id"
-if [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
-  echo "$dir already has the artifact; skipping the download" >&2
-else
-  mkdir -p "$dir"
-  gh run download "$run_id" -n "$artifact_name" -D "$dir" >&2 ||
-    echo "warning: run $run_id has no downloadable $artifact_name artifact" >&2
-fi
-
 echo "RUN_ID=$run_id"
 echo "RUN_URL=$run_url"
 echo "CONCLUSION=$conclusion"
+if [ "$conclusion" != "success" ]; then
+  echo "FAILED_LOG_COMMAND=gh run view $run_id --log-failed"
+fi
+
+# The artifact is downloaded into a staging directory and moved into place only after a complete download,
+# so an existing $dir always holds a complete artifact and a failed download is retried on the next call.
+dir="$out_root/e2e-$run_id"
+if [ -d "$dir" ]; then
+  echo "$dir already has the artifact; skipping the download" >&2
+else
+  partial_dir="$dir.partial"
+  rm -rf "$partial_dir"
+  mkdir -p "$partial_dir"
+  if ! gh run download "$run_id" -n "$artifact_name" -D "$partial_dir" >&2; then
+    rm -rf "$partial_dir"
+    echo "error: could not download the $artifact_name artifact of run $run_id (missing, expired, or a network error)" >&2
+    exit 4
+  fi
+  mv "$partial_dir" "$dir"
+fi
+
 echo "DIR=$dir"
 find "$dir" -type f -name '*.png' | sort | sed 's/^/SCREENSHOT=/'
 
-if [ "$conclusion" != "success" ]; then
-  echo "FAILED_LOG_COMMAND=gh run view $run_id --log-failed"
-  exit 1
-fi
+[ "$conclusion" = "success" ] || exit 1

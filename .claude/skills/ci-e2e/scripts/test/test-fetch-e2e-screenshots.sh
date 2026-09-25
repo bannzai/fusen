@@ -5,7 +5,7 @@
 #   GH_STUB_RUN_LIST                 JSON returned by `gh run list` (default: [])
 #   GH_STUB_RUN_LIST_AFTER_DISPATCH  JSON returned by `gh run list` once `gh workflow run` was called (default: GH_STUB_RUN_LIST)
 #   GH_STUB_CONCLUSION               conclusion returned by `gh run view` (default: success)
-#   GH_STUB_NO_ARTIFACT              when set, `gh run download` fails as if the artifact were missing
+#   GH_STUB_NO_ARTIFACT              when set, `gh run download` leaves a partial download behind and fails
 set -euo pipefail
 
 script="$(cd "$(dirname "$0")/.." && pwd)/fetch-e2e-screenshots.sh"
@@ -27,13 +27,14 @@ case "$1 $2" in
   "run watch") echo "run completed" ;;
   "run view") printf '{"conclusion":"%s","url":"https://github.com/o/r/actions/runs/%s"}\n' "${GH_STUB_CONCLUSION:-success}" "$3" ;;
   "run download")
-    [ -z "${GH_STUB_NO_ARTIFACT:-}" ] || { echo "no artifact matches" >&2; exit 1; }
     while [ $# -gt 0 ]; do
       if [ "$1" = "-D" ]; then dir="$2"; fi
       shift
     done
     mkdir -p "$dir/activation-Fusen-activates"
     : >"$dir/activation-Fusen-activates/activation.png"
+    # Leaves a partial download behind, like an interrupted transfer.
+    [ -z "${GH_STUB_NO_ARTIFACT:-}" ] || { echo "no artifact matches" >&2; exit 1; }
     ;;
   "workflow run") echo "Created workflow_dispatch event" ;;
   *) echo "unexpected gh call: $*" >&2; exit 99 ;;
@@ -133,7 +134,7 @@ check "conclusion is printed" stdout_has "CONCLUSION=success"
 check "screenshot is listed" stdout_has "SCREENSHOT=$out_root/e2e-200/activation-Fusen-activates/activation.png"
 check "artifact is downloaded by name" gh_called "gh run download 200 -n e2e-screenshots -D $out_root/e2e-200"
 
-rerun_script --branch b --sha bbb --find-timeout 0
+GH_STUB_RUN_LIST="$runs" rerun_script --branch b --sha bbb --find-timeout 0
 check "second run succeeds" exit_is 0
 check "second run does not download again" bash -c "! grep -qF 'run download' '$GH_STUB_LOG'"
 check "second run still lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-200/activation-Fusen-activates/activation.png"
@@ -165,9 +166,22 @@ check "failed run exits 1" exit_is 1
 check "failed run prints the log command" stdout_has "FAILED_LOG_COMMAND=gh run view 7 --log-failed"
 check "failed run still lists screenshots" stdout_has "SCREENSHOT=$out_root/e2e-7/activation-Fusen-activates/activation.png"
 
-GH_STUB_CONCLUSION=failure GH_STUB_NO_ARTIFACT=1 run_script --run-id 8
-check "run without an artifact exits 1" exit_is 1
-check "run without an artifact warns" stderr_has "warning: run 8 has no downloadable e2e-screenshots artifact"
+# Download failures
+GH_STUB_NO_ARTIFACT=1 run_script --run-id 8
+check "failed download exits 4" exit_is 4
+check "failed download explains the cause" stderr_has "could not download the e2e-screenshots artifact of run 8"
+check "failed download still prints the run" stdout_has "RUN_ID=8"
+check "failed download lists nothing" bash -c "! grep -q '^SCREENSHOT=' '$work_dir/stdout'"
+check "failed download leaves no artifact directory" bash -c "[ ! -e '$out_root/e2e-8' ] && [ ! -e '$out_root/e2e-8.partial' ]"
+
+rerun_script --run-id 8
+check "download is retried after a failure" gh_called "gh run download 8"
+check "retried download succeeds" exit_is 0
+check "retried download lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-8/activation-Fusen-activates/activation.png"
+
+GH_STUB_CONCLUSION=failure GH_STUB_NO_ARTIFACT=1 run_script --run-id 9
+check "failed run without an artifact exits 4" exit_is 4
+check "failed run without an artifact prints the log command" stdout_has "FAILED_LOG_COMMAND=gh run view 9 --log-failed"
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
