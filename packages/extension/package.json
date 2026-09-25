@@ -54,6 +54,16 @@
         "command": "fusen.deleteThread",
         "title": "Delete Thread",
         "icon": "$(trash)"
+      },
+      {
+        "command": "fusen.copyPrompt",
+        "title": "Copy comments as prompt",
+        "category": "Fusen"
+      },
+      {
+        "command": "fusen.exportPrompt",
+        "title": "Export comments as prompt to .fusen/prompt.md",
+        "category": "Fusen"
       }
     ],
     "menus": {
