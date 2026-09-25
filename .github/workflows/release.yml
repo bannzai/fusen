@@ -1,0 +1,57 @@
+name: Release
+
+# A `v*` tag push publishes fusen-mcp to npm and attaches the extension VSIX to a GitHub release.
+# A manual run (workflow_dispatch) goes through the same steps with `npm publish --dry-run` and creates no release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      IS_TAG: ${{ github.ref_type == 'tag' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Check that the tag matches the package versions
+        if: env.IS_TAG == 'true'
+        run: |
+          for package_dir in packages/extension packages/mcp-server; do
+            package_version=$(node -p "require('./$package_dir/package.json').version")
+            if [ "v$package_version" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::$package_dir is version $package_version, but the tag is $GITHUB_REF_NAME"
+              exit 1
+            fi
+          done
+      - run: npm run package --workspace packages/extension
+      # Publish by folder path, not with --workspace: npm skips a private workspace without error,
+      # while a folder publish fails on `"private": true`, which keeps the package unpublished until that field is removed.
+      - name: Publish fusen-mcp to npm
+        run: |
+          if [ "$IS_TAG" = "true" ]; then
+            npm publish ./packages/mcp-server --access public
+          else
+            npm publish ./packages/mcp-server --access public --dry-run
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Attach the VSIX to a GitHub release
+        if: env.IS_TAG == 'true'
+        run: gh release create "$GITHUB_REF_NAME" packages/extension/*.vsix --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
