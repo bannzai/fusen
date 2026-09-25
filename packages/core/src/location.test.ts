@@ -5,12 +5,14 @@ import { type TextChange, codeAt, locateCode, moveLineRange } from "./location.j
 const fileText = ["function add(a, b) {", "  return a + b;", "}", ""].join("\n");
 const code = ["  return a + b;"];
 
-/** Returns an edit that replaces the 0-based range from `startLine:startCharacter` to `endLine:endCharacter` with `text`. */
-function textChange(startLine: number, startCharacter: number, endLine: number, endCharacter: number, text: string): TextChange {
-  return {
-    range: { start: { line: startLine, character: startCharacter }, end: { line: endLine, character: endCharacter } },
-    text,
-  };
+/** Returns the changes of an edit that replaces the 0-based range from `startLine:startCharacter` to `endLine:endCharacter` with `text`. */
+function edit(startLine: number, startCharacter: number, endLine: number, endCharacter: number, text: string): TextChange[] {
+  return [
+    {
+      range: { start: { line: startLine, character: startCharacter }, end: { line: endLine, character: endCharacter } },
+      text,
+    },
+  ];
 }
 
 test("codeAt returns the text of the lines and undefined past the end of the file", () => {
@@ -50,32 +52,32 @@ test("locateCode finds every line of a multi-line thread and picks the match nea
 
 test("moveLineRange moves the range down when lines are inserted above it", () => {
   // Enter at the end of the line above, and a line typed at the very start of the first line.
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 6 }, textChange(3, 10, 3, 10, "\n  ")), { startLine: 6, endLine: 7 });
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 6 }, textChange(4, 0, 4, 0, "// note\n")), { startLine: 6, endLine: 7 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 6 }, edit(3, 10, 3, 10, "\n  ")), { startLine: 6, endLine: 7 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 6 }, edit(4, 0, 4, 0, "// note\n")), { startLine: 6, endLine: 7 });
 });
 
 test("moveLineRange moves the range up when lines are deleted above it", () => {
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 6 }, textChange(1, 0, 3, 0, "")), { startLine: 3, endLine: 4 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 6 }, edit(1, 0, 3, 0, "")), { startLine: 3, endLine: 4 });
   // Backspace at the start of the first line joins it to the line above.
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 6 }, textChange(3, 7, 4, 0, "")), { startLine: 4, endLine: 5 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 6 }, edit(3, 7, 4, 0, "")), { startLine: 4, endLine: 5 });
 });
 
 test("moveLineRange keeps the range when the commented lines are changed or lines are added after them", () => {
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 5 }, textChange(4, 2, 4, 8, "value")), { startLine: 5, endLine: 5 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 5 }, edit(4, 2, 4, 8, "value")), { startLine: 5, endLine: 5 });
   // Enter at the end of the last line.
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 5 }, textChange(4, 16, 4, 16, "\n")), { startLine: 5, endLine: 5 });
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 5 }, textChange(7, 0, 9, 0, "")), { startLine: 5, endLine: 5 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 5 }, edit(4, 16, 4, 16, "\n")), { startLine: 5, endLine: 5 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 5 }, edit(7, 0, 9, 0, "")), { startLine: 5, endLine: 5 });
 });
 
 test("moveLineRange grows and shrinks with lines added or deleted inside the range", () => {
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 7 }, textChange(4, 3, 4, 3, "\n\n")), { startLine: 5, endLine: 9 });
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 7 }, textChange(4, 0, 5, 0, "")), { startLine: 5, endLine: 6 });
-  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 7 }, textChange(6, 0, 7, 0, "")), { startLine: 5, endLine: 6 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 7 }, edit(4, 3, 4, 3, "\n\n")), { startLine: 5, endLine: 9 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 7 }, edit(4, 0, 5, 0, "")), { startLine: 5, endLine: 6 });
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 7 }, edit(6, 0, 7, 0, "")), { startLine: 5, endLine: 6 });
 });
 
 test("moveLineRange returns undefined when the commented lines are deleted", () => {
-  assert.equal(moveLineRange({ startLine: 5, endLine: 5 }, textChange(4, 0, 5, 0, "")), undefined);
-  assert.equal(moveLineRange({ startLine: 5, endLine: 6 }, textChange(2, 0, 8, 0, "replacement\n")), undefined);
+  assert.equal(moveLineRange({ startLine: 5, endLine: 5 }, edit(4, 0, 5, 0, "")), undefined);
+  assert.equal(moveLineRange({ startLine: 5, endLine: 6 }, edit(2, 0, 8, 0, "replacement\n")), undefined);
 });
 
 test("moveLineRange keeps the code in the range when a line break splits a commented line", () => {
@@ -84,47 +86,54 @@ test("moveLineRange keeps the code in the range when a line break splits a comme
   const before = ["", "", "", ""];
   // In the indentation: the code moves to the next line, and so does the range.
   assert.deepEqual(
-    moveLineRange({ startLine: 5, endLine: 5 }, textChange(4, 2, 4, 2, "\n  "), lineTextAfterChange([...before, "  ", "  return a + b;"])),
+    moveLineRange({ startLine: 5, endLine: 5 }, edit(4, 2, 4, 2, "\n  "), lineTextAfterChange([...before, "  ", "  return a + b;"])),
     { startLine: 6, endLine: 6 },
   );
   assert.deepEqual(
     moveLineRange(
       { startLine: 5, endLine: 6 },
-      textChange(4, 2, 4, 2, "\n  "),
+      edit(4, 2, 4, 2, "\n  "),
       lineTextAfterChange([...before, "  ", "  return a + b;", "}"]),
     ),
     { startLine: 6, endLine: 7 },
   );
   // After the code: the new line is not part of the range.
   assert.deepEqual(
-    moveLineRange({ startLine: 5, endLine: 5 }, textChange(4, 15, 4, 15, "\n  "), lineTextAfterChange([...before, "  return a + b;", "  "])),
+    moveLineRange({ startLine: 5, endLine: 5 }, edit(4, 15, 4, 15, "\n  "), lineTextAfterChange([...before, "  return a + b;", "  "])),
     { startLine: 5, endLine: 5 },
   );
   // Inside the code: both halves stay in the range.
   assert.deepEqual(
-    moveLineRange({ startLine: 5, endLine: 5 }, textChange(4, 9, 4, 9, "\n  "), lineTextAfterChange([...before, "  return ", "  a + b;"])),
+    moveLineRange({ startLine: 5, endLine: 5 }, edit(4, 9, 4, 9, "\n  "), lineTextAfterChange([...before, "  return ", "  a + b;"])),
     { startLine: 5, endLine: 6 },
   );
 });
 
 test("moveLineRange returns undefined when the last line of a file is deleted with the line break before it", () => {
   // `head\nnoted` without a final line break, with the thread on `noted`.
-  assert.equal(moveLineRange({ startLine: 2, endLine: 2 }, textChange(0, 4, 1, 5, ""), () => "head"), undefined);
+  assert.equal(moveLineRange({ startLine: 2, endLine: 2 }, edit(0, 4, 1, 5, ""), () => "head"), undefined);
   // Typing over the whole commented line is an edit of the code, not a deletion.
-  assert.deepEqual(moveLineRange({ startLine: 2, endLine: 2 }, textChange(1, 0, 1, 5, "x"), (lineIndex) => ["head", "x"][lineIndex] ?? ""), {
+  assert.deepEqual(moveLineRange({ startLine: 2, endLine: 2 }, edit(1, 0, 1, 5, "x"), (lineIndex) => ["head", "x"][lineIndex] ?? ""), {
     startLine: 2,
     endLine: 2,
   });
 });
 
-test("moveLineRange applies the changes of one event in order", () => {
-  // VS Code lists the edits of several cursors from the bottom up, so each one is applied to the result of the previous.
-  const changes = [textChange(9, 0, 9, 0, "\n"), textChange(0, 0, 0, 0, "\n")];
+test("moveLineRange applies the changes of one edit in order", () => {
+  // VS Code lists the changes of several cursors from the bottom up, so each one is applied to the result of the previous.
+  assert.deepEqual(moveLineRange({ startLine: 5, endLine: 5 }, [...edit(9, 0, 9, 0, "\n"), ...edit(0, 0, 0, 0, "\n")]), {
+    startLine: 6,
+    endLine: 6,
+  });
+  // Enter with two cursors, in the indentation of the commented line and on the first line: the document after the edit
+  // has the commented code on line 7 (index 6), and the range follows it there.
+  const linesAfterEdit = ["fun", "ction add(a, b) {", "", "", "", "  ", "  return a + b;", "}"];
   assert.deepEqual(
-    changes.reduce<ReturnType<typeof moveLineRange>>((lineRange, change) => lineRange && moveLineRange(lineRange, change), {
-      startLine: 5,
-      endLine: 5,
-    }),
-    { startLine: 6, endLine: 6 },
+    moveLineRange(
+      { startLine: 5, endLine: 5 },
+      [...edit(4, 2, 4, 2, "\n  "), ...edit(0, 3, 0, 3, "\n")],
+      (lineIndex) => linesAfterEdit[lineIndex] ?? "",
+    ),
+    { startLine: 7, endLine: 7 },
   );
 });

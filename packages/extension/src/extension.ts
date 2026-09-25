@@ -59,6 +59,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // Threads whose code is not in their file any more. They are shown as "location unknown", are not moved by edits,
   // and keep the lines and code stored in `.fusen/`, so that they are placed again if the code comes back.
   const unlocatedThreads = new WeakSet<vscode.CommentThread>();
+  // The code on the lines of each thread as the editor last showed it, including unsaved edits. When an edit deletes
+  // the code, this is what an undo brings back, so it is searched for instead of the code stored for the file on disk.
+  const editorCodes = new WeakMap<vscode.CommentThread, string[]>();
 
   /** Returns the stored thread behind `commentThread`. Throws for a thread that has not been saved yet. */
   function storedThread(commentThread: vscode.CommentThread): StoredThread {
@@ -135,6 +138,10 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     unlocatedThreads.delete(commentThread);
     commentThread.range = editorRange(lineRange);
+    const code = codeAt(fileText, lineRange);
+    if (code) {
+      editorCodes.set(commentThread, code);
+    }
     if (saved) {
       await writeLocation(commentThread, lineRange, fileText);
     } else {
@@ -167,10 +174,16 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   /**
-   * Finds the stored code of `commentThread` in `fileText`, the current text of its file, and places the thread there.
+   * Finds the code of `commentThread` in `fileText`, the current text of its file, and places the thread there.
+   * The code is `code` if given, or else the stored code.
    * The thread is shown as location unknown when the code is not in the file or the file (`fileText` undefined) is gone.
    */
-  async function relocate(commentThread: vscode.CommentThread, fileText: string | undefined, saved: boolean): Promise<void> {
+  async function relocate(
+    commentThread: vscode.CommentThread,
+    fileText: string | undefined,
+    saved: boolean,
+    code?: readonly string[],
+  ): Promise<void> {
     const stored = storedThreads.get(commentThread);
     // The thread was deleted while this change waited in the queue.
     if (!stored) {
@@ -178,8 +191,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const { fusenThread } = stored;
     if (fileText !== undefined) {
-      const code = fusenThread.code ?? codeAt(fileText, fusenThread);
-      const lineRange = code && locateCode(fileText, code, fusenThread.startLine);
+      const threadCode = code ?? fusenThread.code ?? codeAt(fileText, fusenThread);
+      const lineRange = threadCode && locateCode(fileText, threadCode, fusenThread.startLine);
       if (lineRange) {
         await place(commentThread, lineRange, fileText, saved);
         return;
@@ -310,24 +323,23 @@ export function activate(context: vscode.ExtensionContext): void {
           // The edit may have brought the code back, for example by undoing its deletion. The document is not saved,
           // so the thread is only shown there until the save writes it.
           const text = document.getText();
-          changeThreadReportingErrors(commentThread, () => relocate(commentThread, text, false));
+          const code = editorCodes.get(commentThread);
+          changeThreadReportingErrors(commentThread, () => relocate(commentThread, text, false, code));
           continue;
         }
         if (!commentThread.range) {
           continue;
         }
-        const lineRange = contentChanges.reduce<LineRange | undefined>(
-          (movedLineRange, change) =>
-            movedLineRange &&
-            moveLineRange(
-              movedLineRange,
-              change,
-              contentChanges.length === 1 ? (lineIndex) => document.lineAt(lineIndex).text : undefined,
-            ),
-          editorLineRange(commentThread.range),
-        );
+        const lineRange = moveLineRange(editorLineRange(commentThread.range), contentChanges, (lineIndex) => document.lineAt(lineIndex).text);
         if (lineRange) {
           commentThread.range = editorRange(lineRange);
+          // Clamped so that a line past the end of the document, which moveLineRange does not return, cannot throw here.
+          editorCodes.set(
+            commentThread,
+            Array.from({ length: lineRange.endLine - lineRange.startLine + 1 }, (_, offset) =>
+              document.lineAt(Math.min(lineRange.startLine - 1 + offset, document.lineCount - 1)).text,
+            ),
+          );
         } else {
           unlocatedThreads.add(commentThread);
           render(commentThread);
