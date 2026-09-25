@@ -109,3 +109,91 @@ jobs:
           name: e2e-cursor-screenshots
           path: test-results/
           retention-days: 14
+
+  # The e2e jobs load the extension from the source tree; these two install the VSIX that package-vsix built,
+  # so a VSIX that cannot run on its own fails here.
+  e2e-vsix:
+    needs: package-vsix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The tests read and write .fusen/ through fusen-core. The extension is not built, so the tests cannot fall back to
+      # the source tree's build and only the VSIX can make Fusen start.
+      - run: npm run build -w fusen-core
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fusen-vsix
+          path: ${{ runner.temp }}/vsix
+      - id: vsix
+        shell: bash
+        run: |
+          vsix_paths=("$RUNNER_TEMP"/vsix/*.vsix)
+          if [ "${#vsix_paths[@]}" -ne 1 ] || [ ! -f "${vsix_paths[0]}" ]; then
+            echo "::error::the fusen-vsix artifact must hold exactly one .vsix: ${vsix_paths[*]}"
+            exit 1
+          fi
+          echo "path=${vsix_paths[0]}" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .vscode-test
+          key: vscode-stable-${{ runner.os }}
+      - run: xvfb-run -a npm run test:e2e
+        env:
+          FUSEN_E2E_VSIX_PATH: ${{ steps.vsix.outputs.path }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-vsix-screenshots
+          path: test-results/
+          retention-days: 14
+
+  e2e-cursor-vsix:
+    needs: package-vsix
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The tests read and write .fusen/ through fusen-core. The extension is not built, so the tests cannot fall back to
+      # the source tree's build and only the VSIX can make Fusen start.
+      - run: npm run build -w fusen-core
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fusen-vsix
+          path: ${{ runner.temp }}/vsix
+      - id: vsix
+        shell: bash
+        run: |
+          vsix_paths=("$RUNNER_TEMP"/vsix/*.vsix)
+          if [ "${#vsix_paths[@]}" -ne 1 ] || [ ! -f "${vsix_paths[0]}" ]; then
+            echo "::error::the fusen-vsix artifact must hold exactly one .vsix: ${vsix_paths[*]}"
+            exit 1
+          fi
+          echo "path=${vsix_paths[0]}" | tee -a "$GITHUB_OUTPUT"
+      - id: cursor
+        shell: bash
+        run: bash e2e/scripts/download-cursor.sh "$RUNNER_TEMP/cursor" | tee -a "$GITHUB_OUTPUT"
+      - run: xvfb-run -a npm run test:e2e
+        env:
+          FUSEN_E2E_EXECUTABLE_PATH: ${{ steps.cursor.outputs.executable-path }}
+          FUSEN_E2E_VSIX_PATH: ${{ steps.vsix.outputs.path }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-cursor-vsix-screenshots
+          path: test-results/
+          retention-days: 14

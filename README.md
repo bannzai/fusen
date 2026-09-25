@@ -163,7 +163,9 @@ xvfb-run -a npm run test:e2e   # Linux; on macOS run `npm run test:e2e`
 
 To run the E2E tests in another editor build such as Cursor, set `FUSEN_E2E_EXECUTABLE_PATH` to its executable. On Linux x64, `bash e2e/scripts/download-cursor.sh <dir>` downloads the latest stable Cursor and prints that path.
 
-CI (`.github/workflows/ci.yml`) runs the same commands on every pull request, runs the E2E tests in both VS Code and Cursor, uploads their screenshots as the `e2e-screenshots` and `e2e-cursor-screenshots` artifacts, the packaged extension as the `fusen-vsix` artifact and the single-file MCP server as the `fusen-mcp` artifact.
+To run the E2E tests against a packaged extension instead of `packages/extension`, set `FUSEN_E2E_VSIX_PATH` to the `.vsix` file (from `npm run package --workspace packages/extension`). Each launch installs it with the editor's `--install-extension` into the test profile. This works with the Linux builds of VS Code and Cursor, which keep their command-line interface in `bin/` next to the executable.
+
+CI (`.github/workflows/ci.yml`) runs the same commands on every pull request, runs the E2E tests in both VS Code and Cursor, once with the extension under development and once with the packaged VSIX installed, uploads their screenshots as the `e2e-screenshots`, `e2e-cursor-screenshots`, `e2e-vsix-screenshots` and `e2e-cursor-vsix-screenshots` artifacts, the packaged extension as the `fusen-vsix` artifact and the single-file MCP server as the `fusen-mcp` artifact.
 
 Design notes: [documents/PROJECT.md](documents/PROJECT.md)
 
