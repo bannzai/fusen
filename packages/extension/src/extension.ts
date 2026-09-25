@@ -749,7 +749,11 @@ export function activate(context: vscode.ExtensionContext): void {
             throw new Error(`The thread ${proposal.threadId} of this reply does not exist`);
           }
           await changeThread(repliedThread, async () => {
-            const { fusenThread } = storedThread(repliedThread);
+            // Read from disk, because the thread file may have changed outside the editor since the thread was shown.
+            const fusenThread = await readThread(workspaceRoot, proposal.threadId);
+            if (!fusenThread) {
+              throw new Error(`The thread ${proposal.threadId} of this reply does not exist`);
+            }
             await save(repliedThread, { workspaceRoot, fusenThread: { ...fusenThread, comments: [...fusenThread.comments, proposal.comment] } });
           });
           await deletePendingProposal(workspaceRoot, proposal.id);
@@ -759,7 +763,7 @@ export function activate(context: vscode.ExtensionContext): void {
           await deletePendingProposal(workspaceRoot, proposal.id);
           // The proposal's editor thread goes away before the approved thread appears, so the two are never shown together.
           await reloadProposals(workspaceRoot);
-          // An agent's thread has no `code`; placing it takes the code at its lines, as for any thread written without it.
+          // Placing it on its `code` follows lines that moved while the proposal waited; one without `code` takes the code at its lines.
           relocateThreadsOnReportingErrors(showStoredThread({ workspaceRoot, fusenThread: proposal }).uri);
         }
       }),
