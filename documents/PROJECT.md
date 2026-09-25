@@ -58,7 +58,7 @@ One file per thread. `<id>` is the thread's `id` and contains only `A-Z a-z 0-9 
 | `version` | Format version, raised only for a change that older readers cannot handle |
 | `file` | Path relative to the workspace folder with `/` separators. Absolute paths and `..` segments are rejected |
 | `startLine`, `endLine` | 1-based inclusive line range, the numbering people and agents use when they talk about code. It refers to the file as saved on disk |
-| `code` | Text of each line from `startLine` to `endLine` when the thread was last placed, used to find the lines again (see "Following code changes"). Optional: a thread written without it, for example by an agent, takes the text at its lines the next time the extension places it |
+| `code` | Text of each line from `startLine` to `endLine` when the thread was last placed, used to find the lines again (see "Following code changes"). Optional: a thread written without it, by an agent or on unsaved changes in the editor, takes the text at its lines the next time the extension places it or the document is saved |
 | `comments` | In posting order, never empty: deleting the last comment deletes the file |
 | `comments[].body` | Markdown |
 | `comments[].author` | `human` (written in the editor) or `agent` (written over MCP) |

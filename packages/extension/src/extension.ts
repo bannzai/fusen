@@ -212,7 +212,8 @@ export function activate(context: vscode.ExtensionContext): void {
       return { text: document.getText(), saved: !document.isDirty };
     }
     try {
-      return { text: new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)), saved: true };
+      // Decoded like the editor would, with the encoding settings of the file, so that the text matches the document's.
+      return { text: await vscode.workspace.decode(await vscode.workspace.fs.readFile(uri), { uri }), saved: true };
     } catch (error) {
       if (error instanceof vscode.FileSystemError && error.code === "FileNotFound") {
         return { text: undefined, saved: true };
@@ -376,6 +377,8 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         commentThread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
         const lineRange = editorLineRange(commentThread.range);
+        // `openTextDocument` returns the document the note was started in, which is open in the editor.
+        const document = await vscode.workspace.openTextDocument(commentThread.uri);
         await save(commentThread, {
           workspaceRoot: workspaceFolder.uri.fsPath,
           fusenThread: {
@@ -383,8 +386,8 @@ export function activate(context: vscode.ExtensionContext): void {
             id: createFusenId(),
             file: path.relative(workspaceFolder.uri.fsPath, commentThread.uri.fsPath).split(path.sep).join("/"),
             ...lineRange,
-            // `openTextDocument` returns the document the note was started in, which is open in the editor.
-            code: codeAt((await vscode.workspace.openTextDocument(commentThread.uri)).getText(), lineRange),
+            // Unsaved code is not in the file on disk, so it is left out until saving the document writes the code of the lines.
+            code: document.isDirty ? undefined : codeAt(document.getText(), lineRange),
             comments: [humanComment(reply.text)],
           },
         });
