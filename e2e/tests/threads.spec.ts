@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { cpSync, mkdtempSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
@@ -48,6 +49,47 @@ test("a note added from the gutter is saved to .fusen/ and restored after a rest
     await window.screenshot({ path: testInfo.outputPath("thread-restored.png") });
   } finally {
     await secondApp.close();
+  }
+});
+
+test("a note added in a git repository records the commit and the state of the file", async ({}, testInfo) => {
+  const profilePath = mkdtempSync(path.join(tmpdir(), "fusen-e2e-"));
+  const workspacePath = path.join(profilePath, "workspace");
+  cpSync(fixtureWorkspacePath, workspacePath, { recursive: true });
+  const git = (args: string[]) =>
+    execFileSync(
+      "git",
+      ["-c", "user.name=Fusen Test", "-c", "user.email=fusen@example.com", "-c", "commit.gpgsign=false", ...args],
+      { cwd: workspacePath, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } },
+    ).trimEnd();
+  git(["init", "--initial-branch=main"]);
+  git(["add", "."]);
+  git(["commit", "-m", "Initial commit"]);
+  // A change below the noted line that is not committed, so the note is posted on a file with unstaged changes.
+  const filePath = path.join(workspacePath, "sample.ts");
+  await writeFile(filePath, `${await readFile(filePath, "utf8")}// Not committed\n`, "utf8");
+  const noteText = "Rename add to sum";
+
+  const app = await launchVSCode({ profilePath, workspacePath, filePath });
+  try {
+    const window = await app.firstWindow({ timeout: vscodeStartupTimeoutMs });
+    await expect(window.locator(".statusbar-item", { hasText: "Fusen" })).toBeVisible({ timeout: 60_000 });
+
+    await addNote(window, "return a + b;", noteText);
+
+    await expect.poll(async () => (await readThreads(workspacePath)).threads.length).toBe(1);
+    const { threads, invalidFiles } = await readThreads(workspacePath);
+    expect(invalidFiles).toEqual([]);
+    expect(threads[0]?.comments).toEqual([
+      expect.objectContaining({
+        body: noteText,
+        author: "human",
+        git: { commit: git(["rev-parse", "HEAD"]), branch: "main", staged: false, unstaged: true, untracked: false },
+      }),
+    ]);
+    await window.screenshot({ path: testInfo.outputPath("thread-added-in-git-repository.png") });
+  } finally {
+    await app.close();
   }
 });
 
