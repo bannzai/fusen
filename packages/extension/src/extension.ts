@@ -10,6 +10,18 @@ interface FusenEditorComment extends vscode.Comment {
   fusenCommentId: string;
 }
 
+/**
+ * A thread as stored in `.fusen/`, with the workspace folder whose `.fusen/` holds it.
+ * The folder is kept rather than looked up from the file, because with nested workspace folders
+ * the innermost folder containing the file is not necessarily the one the thread was read from.
+ */
+interface StoredThread {
+  /** File system path of the workspace folder that stores the thread. */
+  workspaceRoot: string;
+  /** The stored thread, whose `file` is relative to `workspaceRoot`. */
+  fusenThread: FusenThread;
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   // Visible marker that the extension host activated Fusen; the E2E test asserts on it.
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
@@ -30,17 +42,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // The stored thread behind each editor thread. The editor thread is always rendered from it,
   // and every change is written to `.fusen/` before it is rendered.
-  const fusenThreads = new Map<vscode.CommentThread, FusenThread>();
+  const storedThreads = new Map<vscode.CommentThread, StoredThread>();
   // The last change queued for each editor thread; see `changeThread`.
   const threadChanges = new WeakMap<vscode.CommentThread, Promise<void>>();
 
   /** Returns the stored thread behind `commentThread`. Throws for a thread that has not been saved yet. */
-  function storedThread(commentThread: vscode.CommentThread): FusenThread {
-    const fusenThread = fusenThreads.get(commentThread);
-    if (!fusenThread) {
+  function storedThread(commentThread: vscode.CommentThread): StoredThread {
+    const stored = storedThreads.get(commentThread);
+    if (!stored) {
       throw new Error("This thread is not stored by Fusen");
     }
-    return fusenThread;
+    return stored;
   }
 
   /**
@@ -65,7 +77,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const renderedComments = new Map(
       commentThread.comments.map((comment) => [(comment as FusenEditorComment).fusenCommentId, comment as FusenEditorComment]),
     );
-    commentThread.comments = storedThread(commentThread).comments.map((fusenComment) => {
+    commentThread.comments = storedThread(commentThread).fusenThread.comments.map((fusenComment) => {
       const renderedComment = renderedComments.get(fusenComment.id);
       if (renderedComment?.mode === vscode.CommentMode.Editing) {
         return renderedComment;
@@ -79,20 +91,20 @@ export function activate(context: vscode.ExtensionContext): void {
     });
   }
 
-  /** Writes `fusenThread` to `.fusen/` and shows it in `commentThread`. */
-  async function save(commentThread: vscode.CommentThread, fusenThread: FusenThread): Promise<void> {
-    await writeThread(workspaceFolderPath(commentThread.uri), fusenThread);
-    fusenThreads.set(commentThread, fusenThread);
+  /** Writes the thread to `.fusen/` of its workspace folder and shows it in `commentThread`. */
+  async function save(commentThread: vscode.CommentThread, stored: StoredThread): Promise<void> {
+    await writeThread(stored.workspaceRoot, stored.fusenThread);
+    storedThreads.set(commentThread, stored);
     render(commentThread);
   }
 
   /** Deletes the stored file of `commentThread`, if any, and removes the thread from the editor. */
   async function remove(commentThread: vscode.CommentThread): Promise<void> {
-    const fusenThread = fusenThreads.get(commentThread);
-    if (fusenThread) {
-      await deleteThread(workspaceFolderPath(commentThread.uri), fusenThread.id);
+    const stored = storedThreads.get(commentThread);
+    if (stored) {
+      await deleteThread(stored.workspaceRoot, stored.fusenThread.id);
     }
-    fusenThreads.delete(commentThread);
+    storedThreads.delete(commentThread);
     commentThread.dispose();
   }
 
@@ -110,7 +122,7 @@ export function activate(context: vscode.ExtensionContext): void {
           [],
         );
         commentThread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
-        fusenThreads.set(commentThread, fusenThread);
+        storedThreads.set(commentThread, { workspaceRoot: workspaceFolder.uri.fsPath, fusenThread });
         render(commentThread);
       }
     }
@@ -126,11 +138,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     statusBarItem,
     commentController,
-    vscode.workspace.onDidChangeWorkspaceFolders(({ added }) => {
+    vscode.workspace.onDidChangeWorkspaceFolders(({ added, removed }) => {
       // A thread whose folder left the workspace has no `.fusen/` to save to any more.
-      for (const commentThread of fusenThreads.keys()) {
-        if (!vscode.workspace.getWorkspaceFolder(commentThread.uri)) {
-          fusenThreads.delete(commentThread);
+      const removedWorkspaceRoots = new Set(removed.map((workspaceFolder) => workspaceFolder.uri.fsPath));
+      for (const [commentThread, stored] of storedThreads) {
+        if (removedWorkspaceRoots.has(stored.workspaceRoot)) {
+          storedThreads.delete(commentThread);
           commentThread.dispose();
         }
       }
@@ -143,25 +156,36 @@ export function activate(context: vscode.ExtensionContext): void {
         if (!commentThread.range) {
           throw new Error("Fusen notes need a line range");
         }
+        // provideCommentingRanges offers files inside a workspace folder only, so the folder exists.
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(commentThread.uri);
+        if (!workspaceFolder) {
+          throw new Error(`${commentThread.uri.fsPath} is not inside a workspace folder`);
+        }
         commentThread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
         await save(commentThread, {
-          version: 1,
-          id: createFusenId(),
-          file: path.relative(workspaceFolderPath(commentThread.uri), commentThread.uri.fsPath).split(path.sep).join("/"),
-          startLine: commentThread.range.start.line + 1,
-          endLine: commentThread.range.end.line + 1,
-          comments: [humanComment(reply.text)],
+          workspaceRoot: workspaceFolder.uri.fsPath,
+          fusenThread: {
+            version: 1,
+            id: createFusenId(),
+            file: path.relative(workspaceFolder.uri.fsPath, commentThread.uri.fsPath).split(path.sep).join("/"),
+            startLine: commentThread.range.start.line + 1,
+            endLine: commentThread.range.end.line + 1,
+            comments: [humanComment(reply.text)],
+          },
         });
       }),
     ),
     vscode.commands.registerCommand("fusen.reply", (reply: vscode.CommentReply) =>
       changeThread(reply.thread, async () => {
-        const fusenThread = storedThread(reply.thread);
-        await save(reply.thread, { ...fusenThread, comments: [...fusenThread.comments, humanComment(reply.text)] });
+        const { workspaceRoot, fusenThread } = storedThread(reply.thread);
+        await save(reply.thread, {
+          workspaceRoot,
+          fusenThread: { ...fusenThread, comments: [...fusenThread.comments, humanComment(reply.text)] },
+        });
       }),
     ),
     vscode.commands.registerCommand("fusen.editComment", (comment: FusenEditorComment) => {
-      const fusenComment = storedThread(comment.commentThread).comments.find(
+      const fusenComment = storedThread(comment.commentThread).fusenThread.comments.find(
         (storedComment) => storedComment.id === comment.fusenCommentId,
       );
       if (!fusenComment) {
@@ -181,24 +205,27 @@ export function activate(context: vscode.ExtensionContext): void {
       const body = typeof comment.body === "string" ? comment.body : comment.body.value;
       comment.mode = vscode.CommentMode.Preview;
       return changeThread(comment.commentThread, async () => {
-        const fusenThread = storedThread(comment.commentThread);
+        const { workspaceRoot, fusenThread } = storedThread(comment.commentThread);
         await save(comment.commentThread, {
-          ...fusenThread,
-          comments: fusenThread.comments.map((fusenComment) =>
-            fusenComment.id === comment.fusenCommentId ? { ...fusenComment, body } : fusenComment,
-          ),
+          workspaceRoot,
+          fusenThread: {
+            ...fusenThread,
+            comments: fusenThread.comments.map((fusenComment) =>
+              fusenComment.id === comment.fusenCommentId ? { ...fusenComment, body } : fusenComment,
+            ),
+          },
         });
       });
     }),
     vscode.commands.registerCommand("fusen.deleteComment", (comment: FusenEditorComment) =>
       changeThread(comment.commentThread, async () => {
-        const fusenThread = storedThread(comment.commentThread);
+        const { workspaceRoot, fusenThread } = storedThread(comment.commentThread);
         const comments = fusenThread.comments.filter((fusenComment) => fusenComment.id !== comment.fusenCommentId);
         // A stored thread always has a comment, so deleting the last one deletes the thread.
         if (comments.length === 0) {
           await remove(comment.commentThread);
         } else {
-          await save(comment.commentThread, { ...fusenThread, comments });
+          await save(comment.commentThread, { workspaceRoot, fusenThread: { ...fusenThread, comments } });
         }
       }),
     ),
@@ -211,15 +238,6 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {}
-
-/** Returns the file system path of the workspace folder that contains `uri`, whose `.fusen/` stores its threads. */
-function workspaceFolderPath(uri: vscode.Uri): string {
-  const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
-  if (!workspaceFolder) {
-    throw new Error(`${uri.fsPath} is not inside a workspace folder`);
-  }
-  return workspaceFolder.uri.fsPath;
-}
 
 /** Returns a new comment written by the person using the editor. */
 function humanComment(body: string): FusenComment {
