@@ -1,10 +1,18 @@
 name: Release
 
 # A `v*` tag push publishes fusen-mcp to npm and attaches the extension VSIX to a GitHub release.
-# A manual run (workflow_dispatch) goes through the same steps with `npm publish --dry-run` and creates no release.
+# A manual run (workflow_dispatch) and a pull request that touches the release inputs go through the same steps
+# with `npm publish --dry-run` and create no release. GitHub only dispatches workflows that exist on the default
+# branch, so the pull request trigger is what checks changes to this workflow before they are merged.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - packages/**
+      - package.json
+      - package-lock.json
   workflow_dispatch:
 
 permissions:
