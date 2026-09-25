@@ -15,31 +15,31 @@ test("proposals an agent puts in .fusen/_pending/ are shown for approval, and ap
   const readProposalIds = async () => (await readPendingProposals(workspacePath)).proposals.map((proposal) => proposal.id);
   const agentComment = (id: string, body: string) => ({ id, body, author: "agent" as const, createdAt: new Date().toISOString() });
 
+  // Proposals already waiting when VS Code starts are shown by the first read of `.fusen/_pending/`;
+  // the proposed reply below is written while VS Code runs, so it is shown only by watching the directory.
+  await writePendingProposal(workspacePath, {
+    version: 1,
+    id: "approved-proposal",
+    file: "sample.ts",
+    startLine: 6,
+    endLine: 6,
+    comments: [agentComment("approved-comment", "Rename add to sum")],
+  });
+  await writePendingProposal(workspacePath, {
+    version: 1,
+    id: "rejected-proposal",
+    file: "sample.ts",
+    startLine: 2,
+    endLine: 2,
+    comments: [agentComment("rejected-comment", "Use single quotes")],
+  });
+
   const app = await launchVSCode({ profilePath, workspacePath, filePath: path.join(workspacePath, "sample.ts") });
   try {
     const window = await app.firstWindow({ timeout: vscodeStartupTimeoutMs });
-    await expect(window.locator(".statusbar-item", { hasText: "Fusen" })).toBeVisible({ timeout: 60_000 });
-
-    // Written while VS Code is running, as the MCP server does, so the extension has to pick them up by watching.
-    await writePendingProposal(workspacePath, {
-      version: 1,
-      id: "approved-proposal",
-      file: "sample.ts",
-      startLine: 6,
-      endLine: 6,
-      comments: [agentComment("approved-comment", "Rename add to sum")],
-    });
-    await writePendingProposal(workspacePath, {
-      version: 1,
-      id: "rejected-proposal",
-      file: "sample.ts",
-      startLine: 2,
-      endLine: 2,
-      comments: [agentComment("rejected-comment", "Use single quotes")],
-    });
     const approvedWidget = window.locator(".review-widget", { hasText: "Rename add to sum" });
     const rejectedWidget = window.locator(".review-widget", { hasText: "Use single quotes" });
-    await expect(approvedWidget).toBeVisible({ timeout: 30_000 });
+    await expect(approvedWidget).toBeVisible({ timeout: 60_000 });
     await expect(rejectedWidget).toBeVisible();
     await expect(approvedWidget).toContainText("Pending approval");
     await expect(approvedWidget.getByRole("button", { name: "Delete Thread" })).toHaveCount(0);
