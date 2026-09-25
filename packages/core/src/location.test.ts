@@ -107,6 +107,16 @@ test("moveLineRange keeps the code in the range when a line break splits a comme
   );
 });
 
+test("moveLineRange returns undefined when the last line of a file is deleted with the line break before it", () => {
+  // `head\nnoted` without a final line break, with the thread on `noted`.
+  assert.equal(moveLineRange({ startLine: 2, endLine: 2 }, textChange(0, 4, 1, 5, ""), () => "head"), undefined);
+  // Typing over the whole commented line is an edit of the code, not a deletion.
+  assert.deepEqual(moveLineRange({ startLine: 2, endLine: 2 }, textChange(1, 0, 1, 5, "x"), (lineIndex) => ["head", "x"][lineIndex] ?? ""), {
+    startLine: 2,
+    endLine: 2,
+  });
+});
+
 test("moveLineRange applies the changes of one event in order", () => {
   // VS Code lists the edits of several cursors from the bottom up, so each one is applied to the result of the previous.
   const changes = [textChange(9, 0, 9, 0, "\n"), textChange(0, 0, 0, 0, "\n")];

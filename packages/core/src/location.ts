@@ -62,7 +62,7 @@ export function moveLineRange(
   const insertedLines = splitLines(change.text);
   const lineDelta = insertedLines.length - 1 - (end.line - start.line);
   // Whether only whitespace precedes the change on its first line, and only whitespace follows it on its last line.
-  // The lines around the change keep that text, so it is read from the document after the change.
+  // The lines around the change keep that text, so it is read from the document after the change; without it, the text after is unknown.
   const startsBeforeCode = lineTextAfterChange
     ? lineTextAfterChange(start.line).slice(0, start.character).trim() === ""
     : start.character === 0;
@@ -70,17 +70,25 @@ export function moveLineRange(
     ? lineTextAfterChange(start.line + insertedLines.length - 1)
         .slice((insertedLines.length === 1 ? start.character : 0) + insertedLines.at(-1)!.length)
         .trim() === ""
-    : true;
+    : undefined;
   const isInsertion = start.line === end.line && start.character === end.character;
   // The change ends before the code of the first line: every line of the range moves.
   if (end.line < firstLineIndex || (end.line === firstLineIndex && (end.character === 0 || (isInsertion && startsBeforeCode)))) {
     return { startLine: lineRange.startLine + lineDelta, endLine: lineRange.endLine + lineDelta };
   }
   // The change is after the code of the last line: the lines it adds or removes come after the range.
-  if (start.line > lastLineIndex || (start.line === lastLineIndex && end.line === lastLineIndex && !startsBeforeCode && endsAfterCode)) {
+  if (
+    start.line > lastLineIndex ||
+    (start.line === lastLineIndex && end.line === lastLineIndex && !startsBeforeCode && endsAfterCode !== false)
+  ) {
     return lineRange;
   }
   const replacesFirstLine = start.line < firstLineIndex || (start.line === firstLineIndex && startsBeforeCode);
+  // A change across lines from before the code of the first line to after the code of the last line, such as deleting
+  // the last line of a file together with the line break before it, also leaves none of the code.
+  if (replacesFirstLine && end.line === lastLineIndex && end.line > start.line && endsAfterCode === true) {
+    return undefined;
+  }
   if (end.line > lastLineIndex) {
     if (replacesFirstLine) {
       return undefined;

@@ -305,7 +305,14 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       for (const commentThread of storedThreadsOn(document.uri)) {
-        if (unlocatedThreads.has(commentThread) || !commentThread.range) {
+        if (unlocatedThreads.has(commentThread)) {
+          // The edit may have brought the code back, for example by undoing its deletion. The document is not saved,
+          // so the thread is only shown there until the save writes it.
+          const text = document.getText();
+          changeThreadReportingErrors(commentThread, () => relocate(commentThread, text, false));
+          continue;
+        }
+        if (!commentThread.range) {
           continue;
         }
         const lineRange = contentChanges.reduce<LineRange | undefined>(
