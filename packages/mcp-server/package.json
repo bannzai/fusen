@@ -1,7 +1,7 @@
 {
   "name": "fusen-mcp",
   "description": "MCP server that lets AI agents read and post Fusen sticky notes on code lines",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "repository": {

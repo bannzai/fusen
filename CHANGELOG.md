@@ -2,6 +2,11 @@
 
 The VS Code extension (`fusen-<version>.vsix`) and the MCP server (`fusen-mcp.mjs`) are released together under the same version, as files attached to a GitHub release.
 
+## 0.2.0
+
+- Extension: the settings `fusen.humanName` and `fusen.agentName` change the author name shown on human and agent comments (empty keeps "Human" and "Agent"), and a change applies to open threads right away
+- Extension and MCP server: each comment records the git state when it was posted (commit, branch, and whether the file had staged, unstaged or untracked changes). The MCP read tools return it, and the markdown prompt adds one line per comment with the short commit and the changes
+
 ## 0.1.0
 
 First release.
