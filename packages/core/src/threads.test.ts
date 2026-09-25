@@ -123,7 +123,7 @@ test("parseThread rejects values that are not a valid thread", () => {
     { ...thread, comments: [{ ...thread.comments[0], id: "a/b" }] },
   ];
   for (const value of invalidValues) {
-    assert.throws(() => parseThread(value), undefined, JSON.stringify(value));
+    assert.throws(() => parseThread(value), Error, JSON.stringify(value));
   }
 });
 
