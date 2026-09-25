@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { type InvalidFusenFile, fusenFilePath, fusenIdPattern, isRecord, readFusenDirectory, writeFusenFile } from "./files.js";
+import {
+  type InvalidFusenFile,
+  fusenFilePath,
+  fusenIdPattern,
+  isErrnoException,
+  isRecord,
+  readFusenDirectory,
+  writeFusenFile,
+} from "./files.js";
 
 /** Who wrote a comment: the person using the editor, or an AI agent writing over MCP. */
 export type FusenCommentAuthor = "human" | "agent";
@@ -30,6 +38,12 @@ export interface FusenThread {
   startLine: number;
   /** Last commented line, 1-based and inclusive. */
   endLine: number;
+  /**
+   * Text of each line from `startLine` to `endLine` when the thread was last placed on them,
+   * used to find those lines again after the file changes outside the editor.
+   * A thread written without it, for example by an agent, takes the text at its lines the next time the editor places it.
+   */
+  code?: string[];
   /** Comments in the order they were posted. A stored thread always has at least one. */
   comments: FusenComment[];
 }
@@ -66,6 +80,9 @@ export function parseThread(value: unknown): FusenThread {
   if (!isLineNumber(value.startLine) || !isLineNumber(value.endLine) || value.endLine < value.startLine) {
     throw new Error(`Invalid line range: ${JSON.stringify(value.startLine)}-${JSON.stringify(value.endLine)}`);
   }
+  if (value.code !== undefined && !isCode(value.code, value.endLine - value.startLine + 1)) {
+    throw new Error(`Invalid code for lines ${value.startLine}-${value.endLine}: ${JSON.stringify(value.code)}`);
+  }
   if (!Array.isArray(value.comments) || value.comments.length === 0) {
     throw new Error("A thread must have at least one comment");
   }
@@ -75,6 +92,7 @@ export function parseThread(value: unknown): FusenThread {
     file: value.file,
     startLine: value.startLine,
     endLine: value.endLine,
+    ...(value.code === undefined ? {} : { code: value.code }),
     comments: value.comments.map(parseComment),
   };
 }
@@ -89,6 +107,24 @@ export async function readThreads(
 ): Promise<{ threads: FusenThread[]; invalidFiles: InvalidFusenFile[] }> {
   const { values, invalidFiles } = await readFusenDirectory(threadsDirectoryPath(workspaceRoot), parseThread);
   return { threads: values, invalidFiles };
+}
+
+/** Reads the thread `threadId` of the workspace folder at `workspaceRoot`, or returns `undefined` when it has no file. Throws for a file that is not a valid thread. */
+export async function readThread(workspaceRoot: string, threadId: string): Promise<FusenThread | undefined> {
+  const text = await readFile(threadFilePath(workspaceRoot, threadId), "utf8").catch((error: unknown) => {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  });
+  if (text === undefined) {
+    return undefined;
+  }
+  const thread = parseThread(JSON.parse(text));
+  if (thread.id !== threadId) {
+    throw new Error(`Thread id ${thread.id} does not match the file name`);
+  }
+  return thread;
 }
 
 /**
@@ -129,6 +165,15 @@ export function parseComment(value: unknown): FusenComment {
 /** Returns whether `value` is a 1-based line number. */
 function isLineNumber(value: unknown): value is number {
   return Number.isInteger(value) && (value as number) >= 1;
+}
+
+/** Returns whether `value` is the text of `lineCount` lines, one string per line without its line break. */
+function isCode(value: unknown, lineCount: number): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length === lineCount &&
+    value.every((line) => typeof line === "string" && !/[\r\n]/.test(line))
+  );
 }
 
 /** Returns whether `filePath` stays inside the workspace folder and does not depend on the OS separator. */

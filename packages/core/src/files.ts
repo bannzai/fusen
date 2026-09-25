@@ -85,6 +85,6 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Returns whether `error` is a Node.js system error that carries a `code`. */
-function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+export function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
