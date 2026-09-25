@@ -1,5 +1,15 @@
 import path from "node:path";
-import { type FusenComment, type FusenThread, createFusenId, deleteThread, readThreads, writeThread } from "fusen-core";
+import {
+  type FusenComment,
+  type FusenThread,
+  createFusenId,
+  createPrompt,
+  deleteThread,
+  promptFilePath,
+  readThreads,
+  writePrompt,
+  writeThread,
+} from "fusen-core";
 import * as vscode from "vscode";
 
 /** A comment shown in the editor, with the ids that locate the stored comment it shows. */
@@ -232,12 +242,77 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("fusen.deleteThread", (commentThread: vscode.CommentThread) =>
       changeThread(commentThread, () => remove(commentThread)),
     ),
+    vscode.commands.registerCommand("fusen.copyPrompt", async () => {
+      const picked = await pickPromptThreads();
+      if (!picked) {
+        return;
+      }
+      await vscode.env.clipboard.writeText(await createPrompt(picked.workspaceRoot, picked.threads));
+      void vscode.window.showInformationMessage(
+        `Fusen copied ${picked.threads.length} ${picked.threads.length === 1 ? "thread" : "threads"} as a prompt`,
+      );
+    }),
+    vscode.commands.registerCommand("fusen.exportPrompt", async () => {
+      const picked = await pickPromptThreads();
+      if (!picked) {
+        return;
+      }
+      await writePrompt(picked.workspaceRoot, await createPrompt(picked.workspaceRoot, picked.threads));
+      await vscode.window.showTextDocument(vscode.Uri.file(promptFilePath(picked.workspaceRoot)));
+    }),
   );
 
   restoreThreadsReportingErrors(vscode.workspace.workspaceFolders ?? []);
 }
 
 export function deactivate(): void {}
+
+/**
+ * Asks whether the prompt covers every thread or only those of the file in the active editor,
+ * and returns the chosen threads read from `.fusen/` with the workspace folder that stores them.
+ * Returns `undefined` when the person dismisses a pick or there is no workspace folder.
+ */
+async function pickPromptThreads(): Promise<{ workspaceRoot: string; threads: FusenThread[] } | undefined> {
+  const activeFileUri = vscode.window.activeTextEditor?.document.uri;
+  const activeWorkspaceFolder =
+    activeFileUri?.scheme === "file" ? vscode.workspace.getWorkspaceFolder(activeFileUri) : undefined;
+  const scope = await vscode.window.showQuickPick(
+    [
+      { label: "All comments", file: undefined },
+      // Offered only for a file that can have threads, that is, one inside a workspace folder.
+      ...(activeFileUri && activeWorkspaceFolder
+        ? [
+            {
+              label: "Comments in the current file",
+              file: path.relative(activeWorkspaceFolder.uri.fsPath, activeFileUri.fsPath).split(path.sep).join("/"),
+            },
+          ]
+        : []),
+    ].map((item) => ({ ...item, description: item.file })),
+    { placeHolder: "Comments to include in the prompt" },
+  );
+  if (!scope) {
+    return undefined;
+  }
+  // Each workspace folder has its own `.fusen/` and relative paths, so one prompt covers one folder.
+  const workspaceFolder =
+    scope.file !== undefined
+      ? activeWorkspaceFolder
+      : vscode.workspace.workspaceFolders?.length === 1
+        ? vscode.workspace.workspaceFolders[0]
+        : await vscode.window.showWorkspaceFolderPick({ placeHolder: "Workspace folder of the comments" });
+  if (!workspaceFolder) {
+    return undefined;
+  }
+  const { threads, invalidFiles } = await readThreads(workspaceFolder.uri.fsPath);
+  for (const invalidFile of invalidFiles) {
+    void vscode.window.showWarningMessage(`Fusen skipped ${invalidFile.path}: ${invalidFile.message}`);
+  }
+  return {
+    workspaceRoot: workspaceFolder.uri.fsPath,
+    threads: scope.file === undefined ? threads : threads.filter((thread) => thread.file === scope.file),
+  };
+}
 
 /** Returns a new comment written by the person using the editor. */
 function humanComment(body: string): FusenComment {

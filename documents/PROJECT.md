@@ -73,6 +73,10 @@ Comments an agent writes over MCP wait here until a human approves or rejects th
 
 Rejecting deletes the proposal file.
 
+### `.fusen/prompt.md`
+
+The output of the `Fusen: Export comments as prompt to .fusen/prompt.md` command, overwritten on every export and never read back. `Fusen: Copy comments as prompt` puts the same markdown on the clipboard. `createPrompt` in `fusen-core` generates it, so that the MCP server can return the same prompt. It holds every thread of one workspace folder, or only those of the file in the active editor, ordered by file and line: each section is `<file>:<startLine>-<endLine>`, the code of those lines as it is on disk when the prompt is made, and the comments in posting order. The storage format has no resolved state, so every stored thread counts as open.
+
 Rejected alternatives: a single `.fusen/threads.json` makes the extension and the MCP server overwrite each other's concurrent changes and conflicts on every edit in git, and markdown files per thread (as in Local Code Review) need a parser for metadata that JSON gives for free.
 
 ## Rejected options
