@@ -81,6 +81,7 @@ test("post_comment puts a proposed thread in .fusen/_pending/ and rejects lines 
         file: "src/sample.ts",
         startLine: 1,
         endLine: 3,
+        code: ["export function add(a: number, b: number): number {", "  return a + b;", "}"],
         comments: [{ body: "Rename add to sum", author: "agent" }],
       },
     );

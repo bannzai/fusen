@@ -5,6 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   type FusenComment,
   type FusenProposalStatus,
+  codeAt,
   createFusenId,
   parseThread,
   readProposalStatus,
@@ -53,11 +54,12 @@ export function createServer(workspaceRoot: string): McpServer {
         endLine: endLine ?? startLine,
         comments: [agentComment(createFusenId(), body)],
       });
-      const lineCount = await countLines(workspaceRoot, thread.file);
-      if (thread.endLine > lineCount) {
-        throw new Error(`${thread.file} has ${lineCount} lines, so line ${thread.endLine} does not exist`);
+      // The code of the lines lets the editor find them again if the file changes before the proposal is approved.
+      const code = codeAt(await readWorkspaceFile(workspaceRoot, thread.file), thread);
+      if (!code) {
+        throw new Error(`${thread.file} has no line ${thread.endLine}`);
       }
-      await writePendingProposal(workspaceRoot, thread);
+      await writePendingProposal(workspaceRoot, { ...thread, code });
       return proposalResult(thread.id, "pending");
     },
   );
@@ -117,15 +119,11 @@ function proposalResult(proposalId: string, status: FusenProposalStatus): CallTo
   };
 }
 
-/**
- * Returns the number of lines of `file` in the workspace folder at `workspaceRoot`,
- * counted as the editor does, so a trailing newline adds an empty last line.
- */
-async function countLines(workspaceRoot: string, file: string): Promise<number> {
-  const text = await readFile(path.join(workspaceRoot, file), "utf8").catch((error: unknown) => {
+/** Returns the text of `file` in the workspace folder at `workspaceRoot`, with an error message that names the file. */
+async function readWorkspaceFile(workspaceRoot: string, file: string): Promise<string> {
+  return readFile(path.join(workspaceRoot, file), "utf8").catch((error: unknown) => {
     throw new Error(`${file} cannot be read: ${isErrnoException(error) && error.code === "ENOENT" ? "the file does not exist" : String(error)}`);
   });
-  return text.split(/\r\n|\r|\n/).length;
 }
 
 /** Returns whether `error` is a Node.js system error that carries a `code`. */

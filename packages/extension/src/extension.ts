@@ -462,8 +462,15 @@ export function activate(context: vscode.ExtensionContext): void {
       render(commentThread);
     }
     for (const proposal of proposals) {
-      if (isPendingReply(proposal) && !storedThreadsOfFolder.some(([, stored]) => stored.fusenThread.id === proposal.threadId)) {
-        reportProblemOnce(`Fusen cannot show the reply ${proposal.id} because the thread ${proposal.threadId} is not open in the editor`);
+      if (!isPendingReply(proposal) || storedThreadsOfFolder.some(([, stored]) => stored.fusenThread.id === proposal.threadId)) {
+        continue;
+      }
+      // A thread written after the workspace was restored, for example by a git checkout, is shown so that the reply to it can be decided.
+      const repliedThread = threads.find((thread) => thread.id === proposal.threadId);
+      if (!repliedThread) {
+        reportProblemOnce(`Fusen cannot show the reply ${proposal.id} because the thread ${proposal.threadId} cannot be read`);
+      } else if (![...storedThreads.values()].some((stored) => stored.workspaceRoot === workspaceRoot && stored.fusenThread.id === repliedThread.id)) {
+        relocateThreadsOnReportingErrors(showStoredThread({ workspaceRoot, fusenThread: repliedThread }).uri);
       }
     }
   }
