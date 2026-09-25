@@ -11,6 +11,8 @@ export const vscodeStartupTimeoutMs = 120_000;
 /**
  * Launches VS Code with the Fusen extension under development and opens `workspacePath` and `filePath`.
  * Launches that share `profilePath` share user data and extensions, like restarts of the same installation.
+ * When `FUSEN_E2E_EXECUTABLE_PATH` is set, the editor at that path (for example Cursor, which runs the same
+ * workbench and extension host) is launched instead; otherwise VS Code stable is downloaded and launched.
  */
 export async function launchVSCode({
   profilePath,
@@ -22,7 +24,8 @@ export async function launchVSCode({
   filePath: string;
 }): Promise<ElectronApplication> {
   return electron.launch({
-    executablePath: await downloadAndUnzipVSCode("stable"),
+    // VS Code stable is the editor Fusen is built against, so it is what the tests run in unless another is chosen.
+    executablePath: process.env.FUSEN_E2E_EXECUTABLE_PATH || (await downloadAndUnzipVSCode("stable")),
     timeout: vscodeStartupTimeoutMs,
     args: [
       "--no-sandbox",
