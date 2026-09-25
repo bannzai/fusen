@@ -5,6 +5,7 @@
 #   GH_STUB_RUN_LIST                 JSON returned by `gh run list` (default: [])
 #   GH_STUB_RUN_LIST_AFTER_DISPATCH  JSON returned by `gh run list` once `gh workflow run` was called (default: GH_STUB_RUN_LIST)
 #   GH_STUB_CONCLUSION               conclusion returned by `gh run view` (default: success)
+#   GH_STUB_ATTEMPT                  run attempt returned by `gh run view` (default: 1)
 #   GH_STUB_NO_ARTIFACT              when set, `gh run download` leaves a partial download behind and fails
 set -euo pipefail
 
@@ -25,7 +26,7 @@ case "$1 $2" in
     fi
     ;;
   "run watch") echo "run completed" ;;
-  "run view") printf '{"conclusion":"%s","url":"https://github.com/o/r/actions/runs/%s"}\n' "${GH_STUB_CONCLUSION:-success}" "$3" ;;
+  "run view") printf '{"conclusion":"%s","url":"https://github.com/o/r/actions/runs/%s","attempt":%s}\n' "${GH_STUB_CONCLUSION:-success}" "$3" "${GH_STUB_ATTEMPT:-1}" ;;
   "run download")
     while [ $# -gt 0 ]; do
       if [ "$1" = "-D" ]; then dir="$2"; fi
@@ -131,13 +132,20 @@ check "run matching --sha succeeds" exit_is 0
 check "run matching --sha is picked" stdout_has "RUN_ID=200"
 check "run URL is printed" stdout_has "RUN_URL=https://github.com/o/r/actions/runs/200"
 check "conclusion is printed" stdout_has "CONCLUSION=success"
-check "screenshot is listed" stdout_has "SCREENSHOT=$out_root/e2e-200/activation-Fusen-activates/activation.png"
-check "artifact is downloaded by name" gh_called "gh run download 200 -n e2e-screenshots -D $out_root/e2e-200"
+check "screenshot is listed" stdout_has "SCREENSHOT=$out_root/e2e-200-1/activation-Fusen-activates/activation.png"
+check "artifact is downloaded by name" gh_called "gh run download 200 -n e2e-screenshots -D $out_root/e2e-200-1"
 
 GH_STUB_RUN_LIST="$runs" rerun_script --branch b --sha bbb --find-timeout 0
 check "second run succeeds" exit_is 0
 check "second run does not download again" bash -c "! grep -qF 'run download' '$GH_STUB_LOG'"
-check "second run still lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-200/activation-Fusen-activates/activation.png"
+check "second run still lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-200-1/activation-Fusen-activates/activation.png"
+
+GH_STUB_RUN_LIST="$runs" GH_STUB_ATTEMPT=2 rerun_script --branch b --sha bbb --find-timeout 0
+check "re-run attempt succeeds" exit_is 0
+check "re-run attempt is printed" stdout_has "RUN_ATTEMPT=2"
+check "re-run attempt downloads its own artifact" gh_called "gh run download 200 -n e2e-screenshots -D $out_root/e2e-200-2"
+check "re-run attempt lists its own screenshot" stdout_has "SCREENSHOT=$out_root/e2e-200-2/activation-Fusen-activates/activation.png"
+check "re-run attempt does not list the previous attempt" bash -c "! grep -qF 'e2e-200-1' '$work_dir/stdout'"
 
 run_script --run-id 42
 check "--run-id succeeds" exit_is 0
@@ -164,7 +172,7 @@ check "dispatch explains the timeout" stderr_has "no new ci.yml run appeared on 
 GH_STUB_CONCLUSION=failure run_script --run-id 7
 check "failed run exits 1" exit_is 1
 check "failed run prints the log command" stdout_has "FAILED_LOG_COMMAND=gh run view 7 --log-failed"
-check "failed run still lists screenshots" stdout_has "SCREENSHOT=$out_root/e2e-7/activation-Fusen-activates/activation.png"
+check "failed run still lists screenshots" stdout_has "SCREENSHOT=$out_root/e2e-7-1/activation-Fusen-activates/activation.png"
 
 # Download failures
 GH_STUB_NO_ARTIFACT=1 run_script --run-id 8
@@ -172,12 +180,12 @@ check "failed download exits 4" exit_is 4
 check "failed download explains the cause" stderr_has "could not download the e2e-screenshots artifact of run 8"
 check "failed download still prints the run" stdout_has "RUN_ID=8"
 check "failed download lists nothing" bash -c "! grep -q '^SCREENSHOT=' '$work_dir/stdout'"
-check "failed download leaves no artifact directory" bash -c "[ ! -e '$out_root/e2e-8' ] && [ ! -e '$out_root/e2e-8.partial' ]"
+check "failed download leaves no artifact directory" bash -c "[ ! -e '$out_root/e2e-8-1' ] && [ ! -e '$out_root/e2e-8-1.partial' ]"
 
 rerun_script --run-id 8
 check "download is retried after a failure" gh_called "gh run download 8"
 check "retried download succeeds" exit_is 0
-check "retried download lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-8/activation-Fusen-activates/activation.png"
+check "retried download lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-8-1/activation-Fusen-activates/activation.png"
 
 GH_STUB_CONCLUSION=failure GH_STUB_NO_ARTIFACT=1 run_script --run-id 9
 check "failed run without an artifact exits 4" exit_is 4

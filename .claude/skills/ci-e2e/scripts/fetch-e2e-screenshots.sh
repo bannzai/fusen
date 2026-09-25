@@ -11,11 +11,11 @@
 #   --dispatch      Start a new run with `gh workflow run ci.yml --ref <branch>` (for a branch without a
 #                   pull request) and pick that run instead of matching --sha.
 #   --run-id        Use this run and skip the search.
-#   --out-root      The artifact goes to <out-root>/e2e-<run id>. Default: <repository root>/tmp.
+#   --out-root      The artifact goes to <out-root>/e2e-<run id>-<run attempt>. Default: <repository root>/tmp.
 #   --find-timeout  How long to keep looking for a run that has not been created yet. Default: 120.
 #
 # Output on stdout, one KEY=value per line:
-#   RUN_ID, RUN_URL, CONCLUSION, FAILED_LOG_COMMAND=<command> when the run did not succeed,
+#   RUN_ID, RUN_ATTEMPT, RUN_URL, CONCLUSION, FAILED_LOG_COMMAND=<command> when the run did not succeed,
 #   then DIR and SCREENSHOT=<path> for each PNG once the artifact is downloaded.
 # Progress goes to stderr.
 #
@@ -27,8 +27,8 @@
 #   4  the run finished, but its artifact could not be downloaded (missing, expired, or a network error);
 #      nothing is listed and the next call tries the download again
 #
-# Idempotent: a run whose artifact directory exists is not downloaded again; the directory is created only
-# after a complete download.
+# Idempotent: a run attempt whose artifact directory exists is not downloaded again; the directory is created
+# only after a complete download.
 # Requires gh (authenticated), git and jq.
 set -euo pipefail
 
@@ -148,20 +148,23 @@ fi
 echo "watching run $run_id..." >&2
 gh run watch "$run_id" --interval 30 >&2 || fail_run "gh run watch failed for run $run_id"
 
-run_json="$(gh run view "$run_id" --json conclusion,url)" || fail_run "gh run view failed for run $run_id"
+run_json="$(gh run view "$run_id" --json conclusion,url,attempt)" || fail_run "gh run view failed for run $run_id"
 conclusion="$(jq -r '.conclusion' <<<"$run_json")"
 run_url="$(jq -r '.url' <<<"$run_json")"
+run_attempt="$(jq -r '.attempt' <<<"$run_json")"
 
 echo "RUN_ID=$run_id"
+echo "RUN_ATTEMPT=$run_attempt"
 echo "RUN_URL=$run_url"
 echo "CONCLUSION=$conclusion"
 if [ "$conclusion" != "success" ]; then
   echo "FAILED_LOG_COMMAND=gh run view $run_id --log-failed"
 fi
 
+# A re-run keeps the run id and replaces the artifact, so the directory is per attempt.
 # The artifact is downloaded into a staging directory and moved into place only after a complete download,
 # so an existing $dir always holds a complete artifact and a failed download is retried on the next call.
-dir="$out_root/e2e-$run_id"
+dir="$out_root/e2e-$run_id-$run_attempt"
 if [ -d "$dir" ]; then
   echo "$dir already has the artifact; skipping the download" >&2
 else
