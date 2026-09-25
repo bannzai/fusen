@@ -115,7 +115,22 @@ test("replies, comment edits and deletions in a thread are saved to .fusen/", as
     await expect(reviewWidget.locator(".comment-body", { hasText: "Use a template literal here" })).toBeVisible();
     await window.screenshot({ path: testInfo.outputPath("thread-replied-and-edited.png") });
 
+    // Starting to edit another comment re-renders the thread; the unsaved text of the first edit must survive it.
     const reply = reviewWidget.locator(".review-comment", { hasText: "Already done" });
+    await firstComment.hover();
+    await firstComment.getByRole("button", { name: "Edit" }).click();
+    await firstComment.locator(".edit-container .monaco-editor").click();
+    await window.keyboard.press("ControlOrMeta+A");
+    await window.keyboard.type("Unsaved draft");
+    await reply.hover();
+    await reply.getByRole("button", { name: "Edit" }).click();
+    await expect(reply.locator(".edit-container .monaco-editor")).toBeVisible();
+    await expect(firstComment.locator(".edit-container .monaco-editor")).toContainText("Unsaved draft");
+    await firstComment.getByRole("button", { name: "Cancel" }).click();
+    await reply.getByRole("button", { name: "Cancel" }).click();
+    await expect(reviewWidget.locator(".comment-body", { hasText: "Use a template literal here" })).toBeVisible();
+    expect((await readComments())?.map((comment) => comment.body)).toEqual(["Use a template literal here", "Already done"]);
+
     await reply.hover();
     await reply.getByRole("button", { name: "Delete", exact: true }).click();
     await expect
