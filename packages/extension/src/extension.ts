@@ -114,6 +114,30 @@ export function activate(context: vscode.ExtensionContext): void {
   // the code, this is what an undo brings back, so an unsaved document is searched for it rather than for the stored code.
   // It also stands in for the stored code of a thread started on unsaved changes, which has none until the document is saved.
   const editorCodes = new WeakMap<vscode.CommentThread, string[]>();
+  // Whether editors are already due to read their comments again; see `refreshEditorComments`.
+  let editorCommentsRefreshQueued = false;
+
+  /**
+   * Makes every editor read its comment threads again, once for all the threads created in the same turn of the event loop.
+   * An editor reads the threads of its file whenever a comment controller is registered or changed, or a file is opened,
+   * and VS Code (checked in 1.139.0) can drop a thread created while two of those reads are in flight: when the earlier read
+   * finishes, the editor forgets that the later one is still running, so it shows the new thread right away, and then the
+   * later read, which listed the threads before the new one existed, replaces every thread widget in the editor with the ones
+   * it listed. Nothing reads again afterwards, so a note restored at startup or a proposal that arrives then stays hidden
+   * until its file is opened again. See "Showing threads in the editor" in documents/PROJECT.md.
+   */
+  function refreshEditorComments(): void {
+    if (editorCommentsRefreshQueued) {
+      return;
+    }
+    editorCommentsRefreshQueued = true;
+    setImmediate(() => {
+      editorCommentsRefreshQueued = false;
+      // Assigning the provider, even the same one, makes every editor read its threads again. The request reaches VS Code
+      // after the threads created before it, so that read lists them, and it finishes after the reads started earlier.
+      commentController.commentingRangeProvider = commentController.commentingRangeProvider;
+    });
+  }
 
   /** Returns the stored thread behind `commentThread`. Throws for a thread that has not been saved yet. */
   function storedThread(commentThread: vscode.CommentThread): StoredThread {
@@ -240,6 +264,7 @@ export function activate(context: vscode.ExtensionContext): void {
       [],
     );
     commentThread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+    refreshEditorComments();
     return commentThread;
   }
 

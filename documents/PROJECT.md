@@ -94,6 +94,12 @@ A thread stays on the code it was written on while the file changes. `packages/c
 
 Rejected alternative: a content hash of the lines, as Code Context Notes uses. It supports only an exact match, and agents cannot read it; the stored text also lets the whitespace-insensitive comparison work.
 
+### Showing threads in the editor
+
+An editor reads the comment threads of its file from every comment controller when a controller is registered or changes its commenting ranges and when a file is opened, and it replaces all of its thread widgets with the result of each read. VS Code (checked in 1.139.0) can drop a thread that an extension creates while two of those reads are in flight, which happens around startup: when the earlier read finishes, the editor forgets that the later one is still running (`_computePromise = null` in `commentsController.ts`), shows the new thread at once, and then applies the later read, whose list was taken before the thread existed (`getDocumentComments` in `mainThreadComments.ts`). Nothing reads again afterwards, so a note restored at startup, or a proposal that arrived then, stayed hidden until its file was opened again (https://github.com/bannzai/fusen/issues/18).
+
+After it creates editor threads for stored threads or proposals, the extension therefore assigns its commenting range provider again, once per turn of the event loop. That makes every editor read its threads again after the new threads exist, and since each controller answers reads in order, that read is applied last. The cost is that the editors rebuild their thread widgets once more; VS Code keeps the unsent text of a reply or an edit across the rebuild.
+
 ## MCP tools
 
 The server treats its working directory as the workspace folder, so an MCP client registration starts it in the project directory.
