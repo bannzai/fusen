@@ -51,7 +51,7 @@ for (const requiredEntry of requiredEntries) {
     failures.push(`the VSIX does not contain ${requiredEntry}`);
   }
 }
-const unwantedEntryPattern = /(\.map|\.ts|\.test\.[cm]?js|\/tsconfig\.json)$|^extension\/(src|scripts|node_modules)\//;
+const unwantedEntryPattern = /(\.map|\.ts|\.(test|spec)\.[cm]?js|\/tsconfig\.json)$|^extension\/(src|scripts|node_modules)\//;
 for (const entryName of entryNames.filter((name) => unwantedEntryPattern.test(name))) {
   failures.push(`the VSIX contains ${entryName}, which the extension does not need at run time`);
 }
