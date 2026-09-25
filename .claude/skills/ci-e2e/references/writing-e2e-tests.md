@@ -8,6 +8,7 @@ The tests launch a real VS Code (stable, downloaded by `@vscode/test-electron`) 
 | --- | --- |
 | `launchVSCode({ profilePath, workspacePath, filePath })` (`e2e/launch.ts`) | Starts VS Code with the extension under development and opens the workspace and the file. Launches that share `profilePath` share user data, like restarts of the same installation. Returns the `ElectronApplication`; get the window with `app.firstWindow({ timeout: vscodeStartupTimeoutMs })` and close `app` in `finally`. |
 | `runCommand(window, commandTitle)` (`e2e/command-palette.ts`) | Opens the command palette with F1, types the command title, waits for a matching entry and presses Enter. The palette runs its top match, so pass the full title as the palette shows it. |
+| `addNote(window, lineText, noteText)` (`e2e/notes.ts`) | Clicks the gutter at the line of the open editor that contains `lineText`, types `noteText` into the new thread and presses `Add Note`, then waits for the note to be shown. |
 
 Examples:
 
@@ -37,8 +38,8 @@ Add a helper as a module next to `e2e/launch.ts` (and to `include` in `e2e/tscon
 
 ## Gutter and comment threads
 
-Fusen's comments use the VS Code Comments API, so its UI is the comment gutter and the inline thread widget (`.review-widget`). `e2e/tests/threads.spec.ts` drives both:
+Fusen's comments use the VS Code Comments API, so its UI is the comment gutter and the inline thread widget (`.review-widget`). `e2e/notes.ts` and `e2e/tests/threads.spec.ts` drive both:
 
-- The "add comment" glyphs (`.margin-view-overlays .comment-range-glyph`) share one column for all lines. Find the target line with `.view-line` and its text, wait for a laid-out glyph (`.filter({ visible: true }).first()`), then click at the glyph's x and the target line's y taken from their bounding boxes.
+- The "add comment" glyphs (`.margin-view-overlays .comment-range-glyph`) share one column for all lines. Find the target line with `.view-line` and its text, wait for a laid-out glyph (`.filter({ visible: true }).first()`), then click at the glyph's x and the target line's y taken from their bounding boxes. The editor re-renders its lines and gutter each time it reads the comment threads, several times around startup, so read both boxes again until they are read together (`expect(...).toPass()`) instead of reading them once after `toBeVisible`.
 - Type into the thread's comment editor (`.comment-form .monaco-editor`) with the keyboard, then press the button by its accessible name (`Add Note`, `Reply`, `Save`, …).
 - Assert on the visible content (`.comment-body` with the text) and on the saved `.fusen/` files through `fusen-core`, and take a screenshot with the thread open.
