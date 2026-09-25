@@ -1,6 +1,9 @@
 node_modules/
 out/
 *.vsix
+# Copied from the repository root by `npm run package` so that vsce puts them in the VSIX.
+packages/extension/LICENSE
+packages/extension/README.md
 .vscode-test/
 test-results/
 playwright-report/
