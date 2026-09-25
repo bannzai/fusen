@@ -1,12 +1,12 @@
 # Writing E2E tests for Fusen
 
-The tests launch a real VS Code (stable, downloaded by `@vscode/test-electron`) with Playwright's `_electron.launch`, load Fusen from `packages/extension` as a development extension, and open a workspace. The workbench is ordinary DOM, so Playwright locators work on it. CI runs the same tests in Cursor, whose executable is passed as `FUSEN_E2E_EXECUTABLE_PATH`, so a test must not depend on anything only VS Code shows.
+The tests launch a real VS Code (stable, downloaded by `@vscode/test-electron`) with Playwright's `_electron.launch`, load Fusen from `packages/extension` as a development extension, and open a workspace. The workbench is ordinary DOM, so Playwright locators work on it. CI runs the same tests in Cursor, whose executable is passed as `FUSEN_E2E_EXECUTABLE_PATH`, so a test must not depend on anything only VS Code shows. CI also runs them with the packaged VSIX installed instead of the development extension (`FUSEN_E2E_VSIX_PATH`, jobs `e2e-vsix` and `e2e-cursor-vsix`), so a test must not depend on the extension being loaded from the source tree.
 
 ## Helpers
 
 | Helper | What it does |
 | --- | --- |
-| `launchVSCode({ profilePath, workspacePath, filePath })` (`e2e/launch.ts`) | Starts VS Code with the extension under development and opens the workspace and the file. Launches that share `profilePath` share user data, like restarts of the same installation. Returns the `ElectronApplication`; get the window with `app.firstWindow({ timeout: vscodeStartupTimeoutMs })` and close `app` in `finally`. |
+| `launchVSCode({ profilePath, workspacePath, filePath })` (`e2e/launch.ts`) | Starts VS Code with the extension under development, or with the VSIX at `FUSEN_E2E_VSIX_PATH` installed into the profile, and opens the workspace and the file. Launches that share `profilePath` share user data and extensions, like restarts of the same installation. Returns the `ElectronApplication`; get the window with `app.firstWindow({ timeout: vscodeStartupTimeoutMs })` and close `app` in `finally`. |
 | `runCommand(window, commandTitle)` (`e2e/command-palette.ts`) | Opens the command palette with F1, types the command title, waits for a matching entry and presses Enter. The palette runs its top match, so pass the full title as the palette shows it. |
 | `addNote(window, lineText, noteText)` (`e2e/notes.ts`) | Clicks the gutter at the line of the open editor that contains `lineText`, types `noteText` into the new thread and presses `Add Note`, then waits for the note to be shown. |
 
