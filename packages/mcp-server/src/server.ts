@@ -13,6 +13,7 @@ import {
   isWorkspaceRelativePath,
   parseThread,
   readPendingProposals,
+  readGitState,
   readProposalStatus,
   readThreads,
   writePendingProposal,
@@ -56,7 +57,7 @@ export function createServer(workspaceRoot: string): McpServer {
       outputSchema: proposalOutputSchema,
     },
     async ({ file, startLine, endLine, body }) => {
-      // parseThread rejects paths outside the workspace folder and reversed ranges before the file is read.
+      // parseThread rejects paths outside the workspace folder and reversed ranges before the file is read or git runs on it.
       const thread = parseThread({
         version: 1,
         id: createFusenId(),
@@ -70,7 +71,9 @@ export function createServer(workspaceRoot: string): McpServer {
       if (!code) {
         throw new Error(`${thread.file} has no line ${thread.endLine}`);
       }
-      await writePendingProposal(workspaceRoot, { ...thread, code });
+      // Approving moves the comment into a thread as it is, so the git state stays the one of the time the agent posted it.
+      const git = await readGitState(workspaceRoot, thread.file);
+      await writePendingProposal(workspaceRoot, { ...thread, code, comments: thread.comments.map((comment) => ({ ...comment, git })) });
       return proposalResult(thread.id, "pending");
     },
   );
@@ -88,12 +91,18 @@ export function createServer(workspaceRoot: string): McpServer {
       outputSchema: proposalOutputSchema,
     },
     async ({ threadId, body }) => {
-      if (!(await readThreads(workspaceRoot)).threads.some((thread) => thread.id === threadId)) {
+      const thread = (await readThreads(workspaceRoot)).threads.find((storedThread) => storedThread.id === threadId);
+      if (!thread) {
         throw new Error(`Thread ${threadId} does not exist`);
       }
       // The comment takes the proposal id so that the approved comment can be found by get_proposal_status.
       const proposalId = createFusenId();
-      await writePendingProposal(workspaceRoot, { version: 1, id: proposalId, threadId, comment: agentComment(proposalId, body) });
+      await writePendingProposal(workspaceRoot, {
+        version: 1,
+        id: proposalId,
+        threadId,
+        comment: { ...agentComment(proposalId, body), git: await readGitState(workspaceRoot, thread.file) },
+      });
       return proposalResult(proposalId, "pending");
     },
   );
