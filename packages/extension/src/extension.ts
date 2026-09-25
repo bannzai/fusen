@@ -5,12 +5,15 @@ import {
   type FusenPendingReply,
   type FusenThread,
   createFusenId,
+  createPrompt,
   deletePendingProposal,
   deleteThread,
   isPendingReply,
   pendingProposalFilePath,
+  promptFilePath,
   readPendingProposals,
   readThreads,
+  writePrompt,
   writeThread,
 } from "fusen-core";
 import * as vscode from "vscode";
@@ -468,12 +471,101 @@ export function activate(context: vscode.ExtensionContext): void {
         await reloadProposals(workspaceRoot);
       }),
     ),
+    vscode.commands.registerCommand("fusen.copyPrompt", async () => {
+      const picked = await pickPromptThreads();
+      if (!picked) {
+        return;
+      }
+      await vscode.env.clipboard.writeText(await createPrompt(picked.workspaceRoot, picked.threads));
+      void vscode.window.showInformationMessage(
+        `Fusen copied ${picked.threads.length} ${picked.threads.length === 1 ? "thread" : "threads"} as a prompt`,
+      );
+    }),
+    vscode.commands.registerCommand("fusen.exportPrompt", async () => {
+      const picked = await pickPromptThreads();
+      if (!picked) {
+        return;
+      }
+      await writePrompt(picked.workspaceRoot, await createPrompt(picked.workspaceRoot, picked.threads));
+      await vscode.window.showTextDocument(vscode.Uri.file(promptFilePath(picked.workspaceRoot)));
+    }),
   );
 
   loadWorkspaceFolders(vscode.workspace.workspaceFolders ?? []);
 }
 
 export function deactivate(): void {}
+
+/**
+ * Asks whether the prompt covers every thread or only those of the file in the active editor,
+ * and returns the chosen threads read from `.fusen/` with the workspace folder that stores them.
+ * Returns `undefined` when the person dismisses a pick or there is no workspace folder.
+ */
+async function pickPromptThreads(): Promise<{ workspaceRoot: string; threads: FusenThread[] } | undefined> {
+  const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+  const editorUri = vscode.window.activeTextEditor?.document.uri;
+  const activeFileUri = editorUri?.scheme === "file" ? editorUri : undefined;
+  // With nested workspace folders, every folder that contains the file can store threads on it,
+  // not only the innermost one that `getWorkspaceFolder` returns.
+  const activeFileWorkspaceFolders = activeFileUri
+    ? workspaceFolders.filter((workspaceFolder) => relativeFilePath(workspaceFolder, activeFileUri) !== undefined)
+    : [];
+  const scope = await vscode.window.showQuickPick(
+    [
+      { label: "All comments", currentFile: false },
+      // Offered only for a file that can have threads, that is, one inside a workspace folder.
+      ...(activeFileUri && activeFileWorkspaceFolders.length > 0
+        ? [
+            {
+              label: "Comments in the current file",
+              description: vscode.workspace.asRelativePath(activeFileUri),
+              currentFile: true,
+            },
+          ]
+        : []),
+    ],
+    { placeHolder: "Comments to include in the prompt" },
+  );
+  if (!scope) {
+    return undefined;
+  }
+  // Each workspace folder has its own `.fusen/` and relative paths, so one prompt covers one folder.
+  const candidateWorkspaceFolders = scope.currentFile ? activeFileWorkspaceFolders : workspaceFolders;
+  const workspaceFolder =
+    candidateWorkspaceFolders.length === 1
+      ? candidateWorkspaceFolders[0]
+      : (
+          await vscode.window.showQuickPick(
+            candidateWorkspaceFolders.map((candidate) => ({
+              label: candidate.name,
+              description: candidate.uri.fsPath,
+              workspaceFolder: candidate,
+            })),
+            { placeHolder: "Workspace folder of the comments" },
+          )
+        )?.workspaceFolder;
+  if (!workspaceFolder) {
+    return undefined;
+  }
+  const { threads, invalidFiles } = await readThreads(workspaceFolder.uri.fsPath);
+  for (const invalidFile of invalidFiles) {
+    void vscode.window.showWarningMessage(`Fusen skipped ${invalidFile.path}: ${invalidFile.message}`);
+  }
+  const activeFile = scope.currentFile && activeFileUri ? relativeFilePath(workspaceFolder, activeFileUri) : undefined;
+  return {
+    workspaceRoot: workspaceFolder.uri.fsPath,
+    threads: activeFile === undefined ? threads : threads.filter((thread) => thread.file === activeFile),
+  };
+}
+
+/** Returns the path of `fileUri` relative to `workspaceFolder` as stored in a thread, or `undefined` when the file is outside it. */
+function relativeFilePath(workspaceFolder: vscode.WorkspaceFolder, fileUri: vscode.Uri): string | undefined {
+  const relativePath = path.relative(workspaceFolder.uri.fsPath, fileUri.fsPath);
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+    return undefined;
+  }
+  return relativePath.split(path.sep).join("/");
+}
 
 /** Returns a new comment written by the person using the editor. */
 function humanComment(body: string): FusenComment {
