@@ -120,5 +120,10 @@ export async function readProposalStatus(workspaceRoot: string, proposalId: stri
   if (isProposalInThreads((await readThreads(workspaceRoot)).threads, proposalId)) {
     return "approved";
   }
-  return (await fileExists(proposalFilePath)) ? "pending" : "rejected";
+  if (await fileExists(proposalFilePath)) {
+    return "pending";
+  }
+  // An approval that finished between the two reads above wrote the thread before it deleted the proposal,
+  // so reading the threads again tells it apart from a rejection.
+  return isProposalInThreads((await readThreads(workspaceRoot)).threads, proposalId) ? "approved" : "rejected";
 }

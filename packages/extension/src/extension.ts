@@ -200,15 +200,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /**
    * Deletes the stored file of `commentThread`, if any, and removes the thread from the editor.
-   * Pending replies to the thread are rejected with it, because their approve and reject actions live in the thread.
+   * Re-reading the proposals afterwards rejects the pending replies to the thread; see `reloadProposals`.
    */
   async function remove(commentThread: vscode.CommentThread): Promise<void> {
     const stored = storedThreads.get(commentThread);
     if (stored) {
       await deleteThread(stored.workspaceRoot, stored.fusenThread.id);
-      for (const [, reply] of pendingReplies(stored)) {
-        await deletePendingProposal(stored.workspaceRoot, reply.id);
-      }
       // Not awaited: an approval holds the proposal queue while it waits for this thread's queue.
       changeProposals(() => reloadProposals(stored.workspaceRoot)).catch(reportError("could not read proposals"));
     }
@@ -263,12 +260,16 @@ export function activate(context: vscode.ExtensionContext): void {
     for (const invalidFile of invalidFiles) {
       reportProblemOnce(`Fusen skipped ${invalidFile.path}: ${invalidFile.message}`);
     }
-    // An approval that stopped between saving the thread and deleting the proposal is finished here;
-    // otherwise the proposal would stay in `.fusen/_pending/` with no action left to decide it.
+    // A proposal already in a thread is left over from an approval that stopped between saving the thread and deleting
+    // the proposal, and a reply to a thread that no longer exists has no thread to show its approve and reject actions in.
+    // Both are settled here, as approved and as rejected; otherwise they would stay pending with no action left to decide them.
     const { threads } = await readThreads(workspaceRoot);
     const proposals: FusenPendingProposal[] = [];
     for (const proposal of proposalsInDirectory) {
-      if (!isProposalInThreads(threads, proposal.id)) {
+      if (
+        !isProposalInThreads(threads, proposal.id) &&
+        !(isPendingReply(proposal) && !threads.some((thread) => thread.id === proposal.threadId))
+      ) {
         proposals.push(proposal);
         continue;
       }
@@ -313,7 +314,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     for (const proposal of proposals) {
       if (isPendingReply(proposal) && !storedThreadsOfFolder.some(([, stored]) => stored.fusenThread.id === proposal.threadId)) {
-        reportProblemOnce(`Fusen cannot show the reply ${proposal.id} because the thread ${proposal.threadId} does not exist`);
+        reportProblemOnce(`Fusen cannot show the reply ${proposal.id} because the thread ${proposal.threadId} is not open in the editor`);
       }
     }
   }
