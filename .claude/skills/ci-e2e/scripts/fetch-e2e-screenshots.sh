@@ -36,6 +36,9 @@ readonly workflow_file="ci.yml"
 readonly artifact_name="e2e-screenshots"
 # 10 seconds keeps the number of API calls low while a just-pushed run usually appears within one or two polls.
 readonly poll_interval_seconds=10
+# Right after a run is created, `gh run watch` can fail with "failed to get jobs: HTTP 404" (seen on run 36094669438);
+# three attempts one poll interval apart cover that window.
+readonly watch_attempts=3
 
 # Prints the header comment of this file as the usage text.
 usage() {
@@ -146,7 +149,13 @@ if [ -z "$run_id" ]; then
 fi
 
 echo "watching run $run_id..." >&2
-gh run watch "$run_id" --interval 30 >&2 || fail_run "gh run watch failed for run $run_id"
+watch_attempt=1
+until gh run watch "$run_id" --interval 30 >&2; do
+  [ "$watch_attempt" -lt "$watch_attempts" ] || fail_run "gh run watch failed for run $run_id"
+  echo "gh run watch failed; retrying in ${poll_interval_seconds}s..." >&2
+  sleep "$poll_interval_seconds"
+  watch_attempt=$((watch_attempt + 1))
+done
 
 run_json="$(gh run view "$run_id" --json conclusion,url,attempt)" || fail_run "gh run view failed for run $run_id"
 conclusion="$(jq -r '.conclusion' <<<"$run_json")"

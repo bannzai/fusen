@@ -6,6 +6,7 @@
 #   GH_STUB_RUN_LIST_AFTER_DISPATCH  JSON returned by `gh run list` once `gh workflow run` was called (default: GH_STUB_RUN_LIST)
 #   GH_STUB_CONCLUSION               conclusion returned by `gh run view` (default: success)
 #   GH_STUB_ATTEMPT                  run attempt returned by `gh run view` (default: 1)
+#   GH_STUB_WATCH_FAILURES           number of first `gh run watch` calls that fail like a just-created run (default: 0)
 #   GH_STUB_NO_ARTIFACT              when set, `gh run download` leaves a partial download behind and fails
 set -euo pipefail
 
@@ -25,7 +26,13 @@ case "$1 $2" in
       echo "${GH_STUB_RUN_LIST:-[]}"
     fi
     ;;
-  "run watch") echo "run completed" ;;
+  "run watch")
+    if [ "$(grep -c "gh run watch" "$GH_STUB_LOG")" -le "${GH_STUB_WATCH_FAILURES:-0}" ]; then
+      echo "failed to get jobs: HTTP 404: Not Found" >&2
+      exit 1
+    fi
+    echo "run completed"
+    ;;
   "run view") printf '{"conclusion":"%s","url":"https://github.com/o/r/actions/runs/%s","attempt":%s}\n' "${GH_STUB_CONCLUSION:-success}" "$3" "${GH_STUB_ATTEMPT:-1}" ;;
   "run download")
     while [ $# -gt 0 ]; do
@@ -167,6 +174,16 @@ check "dispatch picks the new run" stdout_has "RUN_ID=400"
 GH_STUB_RUN_LIST="$dispatch_runs" run_script --branch b --dispatch --find-timeout 0
 check "dispatch without a new run exits 3" exit_is 3
 check "dispatch explains the timeout" stderr_has "no new ci.yml run appeared on b"
+
+# Watching a just-created run
+GH_STUB_WATCH_FAILURES=1 run_script --run-id 50
+check "watch is retried after a failure" exit_is 0
+check "watch retry is reported" stderr_has "gh run watch failed; retrying"
+check "watch retry still lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-50-1/activation-Fusen-activates/activation.png"
+
+GH_STUB_WATCH_FAILURES=3 run_script --run-id 51
+check "watch gives up after three failures" exit_is 3
+check "watch failure is explained" stderr_has "gh run watch failed for run 51"
 
 # Failed runs
 GH_STUB_CONCLUSION=failure run_script --run-id 7
