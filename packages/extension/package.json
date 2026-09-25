@@ -20,9 +20,124 @@
     "onStartupFinished"
   ],
   "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "fusen.createThread",
+        "title": "Add Note",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "fusen.reply",
+        "title": "Reply",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "fusen.editComment",
+        "title": "Edit",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "fusen.deleteComment",
+        "title": "Delete",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "fusen.saveComment",
+        "title": "Save"
+      },
+      {
+        "command": "fusen.cancelEditComment",
+        "title": "Cancel"
+      },
+      {
+        "command": "fusen.deleteThread",
+        "title": "Delete Thread",
+        "icon": "$(trash)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "fusen.createThread",
+          "when": "false"
+        },
+        {
+          "command": "fusen.reply",
+          "when": "false"
+        },
+        {
+          "command": "fusen.editComment",
+          "when": "false"
+        },
+        {
+          "command": "fusen.deleteComment",
+          "when": "false"
+        },
+        {
+          "command": "fusen.saveComment",
+          "when": "false"
+        },
+        {
+          "command": "fusen.cancelEditComment",
+          "when": "false"
+        },
+        {
+          "command": "fusen.deleteThread",
+          "when": "false"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "fusen.deleteThread",
+          "group": "navigation",
+          "when": "commentController == fusen && !commentThreadIsEmpty"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "fusen.createThread",
+          "group": "inline",
+          "when": "commentController == fusen && commentThreadIsEmpty"
+        },
+        {
+          "command": "fusen.reply",
+          "group": "inline",
+          "when": "commentController == fusen && !commentThreadIsEmpty"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "fusen.editComment",
+          "group": "inline@1",
+          "when": "commentController == fusen"
+        },
+        {
+          "command": "fusen.deleteComment",
+          "group": "inline@2",
+          "when": "commentController == fusen"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "fusen.cancelEditComment",
+          "group": "inline@1",
+          "when": "commentController == fusen"
+        },
+        {
+          "command": "fusen.saveComment",
+          "group": "inline@2",
+          "when": "commentController == fusen"
+        }
+      ]
+    }
+  },
   "scripts": {
     "build": "tsc -p .",
     "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "fusen-core": "0.0.1"
   },
   "devDependencies": {
     "@types/vscode": "^1.100.0"
