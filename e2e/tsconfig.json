@@ -5,5 +5,5 @@
     "moduleResolution": "node16",
     "types": ["node"]
   },
-  "include": ["playwright.config.ts", "tests"]
+  "include": ["playwright.config.ts", "launch.ts", "tests"]
 }
