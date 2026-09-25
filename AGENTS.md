@@ -12,7 +12,7 @@ Builds, tests and anything that launches VS Code or a browser run on an external
 
 - The `ci-e2e` skill (`.claude/skills/ci-e2e/SKILL.md`) runs the steps below as one script and covers how to write E2E tests
 - Push the branch and open a pull request; CI runs on every pull request. To run it on a branch without a pull request: `gh workflow run ci.yml --ref <branch>`
-- CI steps, which are the verification commands: `npm ci` → `npm run typecheck` → `npm run build` → `npm test` (job `build-test`), `npm run build` → `npm run package --workspace packages/extension` (job `package-vsix`, uploads the `fusen-vsix` artifact), and `npm run build` → `xvfb-run -a npm run test:e2e` (job `e2e`)
+- CI steps, which are the verification commands: `npm ci` → `npm run typecheck` → `npm run build` → `npm test` (job `build-test`, uploads the single-file MCP server as the `fusen-mcp` artifact), `npm run build` → `npm run package --workspace packages/extension` (job `package-vsix`, uploads the `fusen-vsix` artifact), and `npm run build` → `xvfb-run -a npm run test:e2e` (job `e2e`)
 - Wait for and inspect results: `gh pr checks <pr> --watch`, then `gh run view <run-id> --log-failed` for failures
 - Visual check: the `e2e` job uploads Playwright output, including screenshots, as the `e2e-screenshots` artifact. Download it with `gh run download <run-id> -n e2e-screenshots -D ./tmp/e2e-<run-id>` and Read the PNG files to judge the UI
 - When adding UI behavior, extend an E2E test in `e2e/tests/` so it drives the UI and saves a screenshot with `testInfo.outputPath(...)`; that screenshot is the evidence of the change
