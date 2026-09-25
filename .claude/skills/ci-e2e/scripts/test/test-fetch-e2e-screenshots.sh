@@ -144,6 +144,9 @@ check "--run-id with --dispatch exits 2" exit_is 2
 run_script --dispatch --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --branch b
 check "--dispatch with --sha exits 2" exit_is 2
 
+run_script --editor code
+check "unknown --editor exits 2" exit_is 2
+
 run_script --help
 check "--help exits 0" exit_is 0
 
@@ -197,6 +200,25 @@ GH_STUB_RUN_LIST="$runs" GH_STUB_ATTEMPT=3 GH_STUB_STARTED_AT=2026-09-25T02:30:0
 check "attempt without its own artifact exits 4" exit_is 4
 check "attempt without its own artifact downloads nothing" bash -c "! grep -qF '/zip' '$GH_STUB_LOG'"
 check "attempt without its own artifact is explained" stderr_has "artifact of run 200 attempt 3 (not uploaded by this attempt"
+
+# The VS Code and Cursor jobs of one run upload separate artifacts; --editor picks one and its own directory.
+editor_artifacts='{"artifacts": [
+  {"id": 1, "name": "e2e-screenshots", "created_at": "2026-09-25T01:00:00Z", "expired": false},
+  {"id": 4, "name": "e2e-cursor-screenshots", "created_at": "2026-09-25T01:00:00Z", "expired": false}
+]}'
+GH_STUB_ARTIFACTS="$editor_artifacts" run_script --run-id 60 --editor cursor
+check "--editor cursor succeeds" exit_is 0
+check "--editor cursor downloads the Cursor artifact" gh_called "actions/artifacts/4/zip"
+check "--editor cursor does not download the VS Code artifact" bash -c "! grep -qF 'actions/artifacts/1/zip' '$GH_STUB_LOG'"
+check "--editor cursor lists its screenshot in its own directory" stdout_has "SCREENSHOT=$out_root/e2e-cursor-60-1/activation-Fusen-activates/activation.png"
+
+GH_STUB_ARTIFACTS="$editor_artifacts" rerun_script --run-id 60
+check "default editor downloads the VS Code artifact" gh_called "actions/artifacts/1/zip"
+check "default editor lists its screenshot in the VS Code directory" stdout_has "SCREENSHOT=$out_root/e2e-60-1/activation-Fusen-activates/activation.png"
+
+GH_STUB_NO_ARTIFACT=1 run_script --run-id 61 --editor cursor
+check "missing Cursor artifact exits 4" exit_is 4
+check "missing Cursor artifact is named" stderr_has "could not download the e2e-cursor-screenshots artifact of run 61"
 
 run_script --run-id 42
 check "--run-id succeeds" exit_is 0

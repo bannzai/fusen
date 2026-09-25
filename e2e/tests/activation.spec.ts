@@ -14,6 +14,8 @@ test("Fusen activates in VS Code", async ({}, testInfo) => {
   });
   try {
     const window = await app.firstWindow({ timeout: vscodeStartupTimeoutMs });
+    // The editor can be switched with FUSEN_E2E_EXECUTABLE_PATH, so the job log records which build ran.
+    console.log(`Editor: ${await app.evaluate(({ app }) => `${app.getName()} ${app.getVersion()}`)}`);
     await expect(window.locator(".statusbar-item", { hasText: "Fusen" })).toBeVisible({ timeout: 60_000 });
     await window.screenshot({ path: testInfo.outputPath("activation.png") });
   } finally {
