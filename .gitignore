@@ -2,9 +2,12 @@ node_modules/
 out/
 dist/
 *.vsix
-# Copied from the repository root by `npm run package` so that vsce puts them in the VSIX.
+# Copied from the repository root by `npm run package` so that vsce puts them in the VSIX,
+# and by the prepack script of fusen-mcp so that npm puts them in its package.
 packages/extension/LICENSE
 packages/extension/README.md
+packages/mcp-server/LICENSE
+packages/mcp-server/README.md
 .vscode-test/
 test-results/
 playwright-report/

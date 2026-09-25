@@ -2,7 +2,6 @@
   "name": "fusen-mcp",
   "description": "MCP server that lets AI agents read and post Fusen sticky notes on code lines",
   "version": "0.0.1",
-  "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -22,6 +21,7 @@
     "build": "tsc -p . && npm run bundle",
     "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --external:@modelcontextprotocol/sdk --external:zod --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/index.js",
     "typecheck": "tsc -p . --noEmit",
+    "prepack": "cp ../../LICENSE ../../README.md .",
     "test": "npm run build && node --test \"out/**/*.test.js\""
   },
   "dependencies": {
