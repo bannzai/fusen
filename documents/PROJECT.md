@@ -27,6 +27,55 @@ AI agents (Claude Code, Codex CLI) point at code as "file path + line number" in
 
 There is no database, backend, hosting, authentication, analytics or billing. Fusen collects no user data; everything stays in the workspace's `.fusen/` directory.
 
+## Storage format
+
+Each workspace folder has its own `.fusen/` directory. `packages/core` (`fusen-core`) is the only code that reads and writes it; the extension and the MCP server both use it.
+
+### `.fusen/threads/<id>.json`
+
+One file per thread. `<id>` is the thread's `id` and contains only `A-Z a-z 0-9 _ -` (new ids are UUIDs), so it cannot point outside the directory.
+
+```json
+{
+  "version": 1,
+  "id": "0b6c1e0a-3f7e-4a53-9d53-6a2d8f1c9e41",
+  "file": "src/sample.ts",
+  "startLine": 6,
+  "endLine": 6,
+  "comments": [
+    {
+      "id": "5f0d3a4e-8c1b-4d2f-a9e7-2b1c0d9e8f7a",
+      "body": "Rename add to sum",
+      "author": "human",
+      "createdAt": "2026-09-25T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Format version, raised only for a change that older readers cannot handle |
+| `file` | Path relative to the workspace folder with `/` separators. Absolute paths and `..` segments are rejected |
+| `startLine`, `endLine` | 1-based inclusive line range, the numbering people and agents use when they talk about code |
+| `comments` | In posting order, never empty: deleting the last comment deletes the file |
+| `comments[].body` | Markdown |
+| `comments[].author` | `human` (written in the editor) or `agent` (written over MCP) |
+| `comments[].createdAt` | ISO 8601 |
+
+Files are written to a temporary file in the same directory and renamed into place, so a reader never sees a partial file. A file that fails validation is reported and skipped; the other threads still load. Nothing in the format depends on git, so uncommitted and untracked files can be commented.
+
+### `.fusen/_pending/<id>.json`
+
+Comments an agent writes over MCP wait here until a human approves or rejects them in the editor (implemented in a later issue). One file per proposal, with the same `version` and id rules as threads:
+
+- A new thread: the same shape as a thread file, with every comment's `author` set to `agent`. Approving moves it to `.fusen/threads/<id>.json`.
+- A reply to an existing thread: `{ "version": 1, "id": "<proposal id>", "threadId": "<thread id>", "comment": { ... } }`, where `comment` has the fields of `comments[]`. Approving appends the comment to that thread.
+
+Rejecting deletes the proposal file.
+
+Rejected alternatives: a single `.fusen/threads.json` makes the extension and the MCP server overwrite each other's concurrent changes and conflicts on every edit in git, and markdown files per thread (as in Local Code Review) need a parser for metadata that JSON gives for free.
+
 ## Rejected options
 
 - **macOS app**: would rebuild an editor and diff viewer and re-implement the gutter UI that the Comments API provides, and would live apart from the editor where code is read.

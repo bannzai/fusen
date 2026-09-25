@@ -1,23 +1,27 @@
 # Writing E2E tests for Fusen
 
-The tests launch a real VS Code (stable, downloaded by `@vscode/test-electron`) with Playwright's `_electron.launch`, load Fusen from `packages/extension` as a development extension, and open `e2e/fixtures/workspace`. The workbench is ordinary DOM, so Playwright locators work on it.
+The tests launch a real VS Code (stable, downloaded by `@vscode/test-electron`) with Playwright's `_electron.launch`, load Fusen from `packages/extension` as a development extension, and open a workspace. The workbench is ordinary DOM, so Playwright locators work on it.
 
-## Helpers (`e2e/helpers/vscode.ts`)
+## Helpers
 
 | Helper | What it does |
 | --- | --- |
-| `launchVSCode(openFile)` | Starts VS Code with a fresh profile, opens the fixture workspace and `openFile` (relative to it), and waits until the Fusen status bar item is visible, which means the extension has activated. Returns `{ app, window }`; close `app` in `finally`. |
-| `runCommand(window, commandTitle)` | Opens the command palette with F1, types the command title, waits for a matching entry and presses Enter. The palette runs its top match, so pass the full title as the palette shows it. |
+| `launchVSCode({ profilePath, workspacePath, filePath })` (`e2e/launch.ts`) | Starts VS Code with the extension under development and opens the workspace and the file. Launches that share `profilePath` share user data, like restarts of the same installation. Returns the `ElectronApplication`; get the window with `app.firstWindow({ timeout: vscodeStartupTimeoutMs })` and close `app` in `finally`. |
+| `runCommand(window, commandTitle)` (`e2e/command-palette.ts`) | Opens the command palette with F1, types the command title, waits for a matching entry and presses Enter. The palette runs its top match, so pass the full title as the palette shows it. |
 
-`e2e/tests/command-palette.spec.ts` shows the pattern: run a command, drive the input it opens with the keyboard, assert on the result, take a screenshot.
+Examples:
 
-Add a helper to `e2e/helpers/vscode.ts` when an operation is needed by more than one test, and cover it with a test so that a VS Code update that breaks it fails CI.
+- `e2e/tests/activation.spec.ts`: launch, wait for activation, screenshot
+- `e2e/tests/command-palette.spec.ts`: run a command, drive the input it opens with the keyboard, assert on the result
+- `e2e/tests/threads.spec.ts`: add a note from the gutter, restart VS Code with the same profile, and edit a thread; it copies the fixture workspace into the profile directory so that the `.fusen/` it writes stays out of the repository
+
+Add a helper as a module next to `e2e/launch.ts` (and to `include` in `e2e/tsconfig.json`) when an operation is needed by more than one test, and cover it with a test so that a VS Code update that breaks it fails CI.
 
 ## Choosing selectors
 
 1. Prefer roles and accessible names: `window.getByRole("option", { name: ... })`, `getByRole("button", { name: ... })`. VS Code labels most widgets for screen readers, and these names change less often than CSS classes.
-2. For workbench parts without a useful role, use the stable part class and narrow it with text: `.statusbar-item` with `hasText`, `.quick-input-widget`, `.monaco-editor`.
-3. Avoid positional selectors (`nth`, pixel coordinates) and generated ids; they break when the layout or VS Code version changes.
+2. For workbench parts without a useful role, use the part class and narrow it with text: `.statusbar-item` with `hasText`, `.quick-input-widget`, `.view-line` with `hasText`, `.review-widget` with `hasText`.
+3. Avoid fixed positions (`nth`, hard-coded pixel coordinates) and generated ids; they break when the layout or VS Code version changes. When a position is unavoidable, compute it from the bounding boxes of elements found by the rules above (see the gutter section).
 4. To find a selector for a new element, dump the DOM around it from a test, run it in CI, and read the output in the job log:
 
    ```ts
@@ -26,15 +30,15 @@ Add a helper to `e2e/helpers/vscode.ts` when an operation is needed by more than
 
 ## Waiting
 
-- Wait on the state you need with web-first assertions (`await expect(locator).toBeVisible()`, `toHaveText`, …). They retry until the timeout. Never use fixed sleeps (`waitForTimeout`).
-- Start from `launchVSCode`, which already waits for Fusen's activation; commands and editors are ready after it returns.
+- Wait on the state you need with web-first assertions (`await expect(locator).toBeVisible()`, `toHaveText`, …) or `expect.poll` for state outside the DOM such as `.fusen/` files. They retry until the timeout. Never use fixed sleeps (`waitForTimeout`).
+- After launching, wait for the Fusen status bar item (`.statusbar-item` with text `Fusen`); it is created in `activate`, so commands and comment threads are ready after it appears.
 - After an action, assert on its visible effect before the next action (for example, the status bar showing `Ln 5, Col 1` after Go to Line) so that failures point at the step that went wrong.
-- The Playwright timeout per test is 180 seconds (`e2e/playwright.config.ts`) because the first VS Code download and launch dominate the run time. Keep individual waits at the default expect timeout unless an operation is known to be slow, and write down why when raising it.
+- The Playwright timeout per test is 180 seconds (`e2e/playwright.config.ts`) because VS Code start-up dominates the run time. A test that launches VS Code more than once raises it with `test.setTimeout`. Keep other waits at the default expect timeout unless an operation is known to be slow, and write down why when raising it.
 
 ## Gutter and comment threads
 
-Fusen's comments use the VS Code Comments API, so its UI is the comment gutter and the inline thread widget. Once the extension provides commenting ranges for a document, hovering a line in the editor margin shows the "add comment" glyph for that line, and clicking it opens a thread widget below the line.
+Fusen's comments use the VS Code Comments API, so its UI is the comment gutter and the inline thread widget (`.review-widget`). `e2e/tests/threads.spec.ts` drives both:
 
-- Target the line through the editor margin: hover the line number element in `.monaco-editor .margin-view-overlays` whose text is the line number, then click the glyph that appears in the same row.
-- The glyph and thread widget classes are internal to VS Code. Find them with the DOM dump above in the first test that needs them, then wrap the operation in a helper (for example `addCommentOnLine(window, line)`) so that only the helper changes when VS Code does.
-- Assert on the thread widget's visible content (the comment body text) rather than on its internal structure, and take a screenshot with the thread open.
+- The "add comment" glyphs (`.margin-view-overlays .comment-range-glyph`) share one column for all lines. Find the target line with `.view-line` and its text, wait for a laid-out glyph (`.filter({ visible: true }).first()`), then click at the glyph's x and the target line's y taken from their bounding boxes.
+- Type into the thread's comment editor (`.comment-form .monaco-editor`) with the keyboard, then press the button by its accessible name (`Add Note`, `Reply`, `Save`, …).
+- Assert on the visible content (`.comment-body` with the text) and on the saved `.fusen/` files through `fusen-core`, and take a screenshot with the thread open.

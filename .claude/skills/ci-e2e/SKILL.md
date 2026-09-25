@@ -31,7 +31,7 @@ Exit code 4 means the run finished but its artifact could not be downloaded, so 
 
 ## Extending the E2E tests
 
-Tests live in `e2e/tests/*.spec.ts`; shared helpers in `e2e/helpers/vscode.ts`. Read `references/writing-e2e-tests.md` before adding UI operations; it covers the helpers, selector choice and waiting.
+Tests live in `e2e/tests/*.spec.ts`; shared helpers next to them in `e2e/` (`launch.ts`, `command-palette.ts`). Read `references/writing-e2e-tests.md` before adding UI operations; it covers the helpers, selector choice and waiting.
 
 Every test that adds UI behavior saves a screenshot with `testInfo.outputPath("<name>.png")` so that it ends up in the artifact.
 

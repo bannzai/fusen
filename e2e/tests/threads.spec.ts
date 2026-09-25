@@ -1,0 +1,147 @@
+import { cpSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { expect, test } from "@playwright/test";
+import { readThreads, writeThread } from "fusen-core";
+import { launchVSCode, vscodeStartupTimeoutMs } from "../launch";
+
+const fixtureWorkspacePath = path.resolve(__dirname, "../fixtures/workspace");
+
+test("a note added from the gutter is saved to .fusen/ and restored after a restart", async ({}, testInfo) => {
+  // Two VS Code launches run in this test, so it gets twice the per-launch budget of the config.
+  test.setTimeout(360_000);
+  const profilePath = mkdtempSync(path.join(tmpdir(), "fusen-e2e-"));
+  // A copy keeps the `.fusen/` the test writes out of the repository's fixture.
+  const workspacePath = path.join(profilePath, "workspace");
+  cpSync(fixtureWorkspacePath, workspacePath, { recursive: true });
+  const launchOptions = { profilePath, workspacePath, filePath: path.join(workspacePath, "sample.ts") };
+  const noteText = "Rename add to sum";
+
+  const firstApp = await launchVSCode(launchOptions);
+  try {
+    const window = await firstApp.firstWindow({ timeout: vscodeStartupTimeoutMs });
+    await expect(window.locator(".statusbar-item", { hasText: "Fusen" })).toBeVisible({ timeout: 60_000 });
+
+    // The gutter glyph column is shared by all lines, so click it at the height of the target line.
+    const targetLine = window.locator(".view-line", { hasText: "return a + b;" });
+    // Glyphs of lines being re-rendered can be attached without a box, so wait for one that is laid out.
+    const gutterGlyph = window.locator(".margin-view-overlays .comment-range-glyph").filter({ visible: true }).first();
+    await expect(targetLine).toBeVisible({ timeout: 30_000 });
+    await expect(gutterGlyph).toBeVisible({ timeout: 30_000 });
+    const targetLineBox = await targetLine.boundingBox();
+    const gutterGlyphBox = await gutterGlyph.boundingBox();
+    if (!targetLineBox || !gutterGlyphBox) {
+      throw new Error("The target line or the gutter glyph is not rendered");
+    }
+    await window.mouse.move(gutterGlyphBox.x + gutterGlyphBox.width / 2, targetLineBox.y + targetLineBox.height / 2);
+    await window.mouse.down();
+    await window.mouse.up();
+
+    const reviewWidget = window.locator(".review-widget");
+    await reviewWidget.locator(".comment-form .monaco-editor").click();
+    await window.keyboard.type(noteText);
+    await reviewWidget.getByRole("button", { name: "Add Note" }).click();
+    await expect(reviewWidget.locator(".comment-body", { hasText: noteText })).toBeVisible();
+
+    await expect.poll(async () => (await readThreads(workspacePath)).threads.length).toBe(1);
+    const { threads, invalidFiles } = await readThreads(workspacePath);
+    expect(invalidFiles).toEqual([]);
+    expect(threads[0]).toMatchObject({
+      file: "sample.ts",
+      startLine: 6,
+      endLine: 6,
+      comments: [{ body: noteText, author: "human" }],
+    });
+    await window.screenshot({ path: testInfo.outputPath("thread-added.png") });
+  } finally {
+    await firstApp.close();
+  }
+
+  const secondApp = await launchVSCode(launchOptions);
+  try {
+    const window = await secondApp.firstWindow({ timeout: vscodeStartupTimeoutMs });
+    await expect(window.locator(".review-widget .comment-body", { hasText: noteText })).toBeVisible({ timeout: 60_000 });
+    await window.screenshot({ path: testInfo.outputPath("thread-restored.png") });
+  } finally {
+    await secondApp.close();
+  }
+});
+
+test("replies, comment edits and deletions in a thread are saved to .fusen/", async ({}, testInfo) => {
+  const profilePath = mkdtempSync(path.join(tmpdir(), "fusen-e2e-"));
+  const workspacePath = path.join(profilePath, "workspace");
+  cpSync(fixtureWorkspacePath, workspacePath, { recursive: true });
+  await writeThread(workspacePath, {
+    version: 1,
+    id: "e2e-thread",
+    file: "sample.ts",
+    startLine: 2,
+    endLine: 2,
+    comments: [{ id: "first", body: "Use a template literal", author: "human", createdAt: new Date().toISOString() }],
+  });
+  const readComments = async () => (await readThreads(workspacePath)).threads[0]?.comments;
+
+  const app = await launchVSCode({ profilePath, workspacePath, filePath: path.join(workspacePath, "sample.ts") });
+  try {
+    const window = await app.firstWindow({ timeout: vscodeStartupTimeoutMs });
+    const reviewWidget = window.locator(".review-widget", { hasText: "Use a template literal" });
+    await expect(reviewWidget).toBeVisible({ timeout: 60_000 });
+
+    // The reply box of a restored thread is either collapsed behind a prompt button that expands and focuses it,
+    // or already expanded, depending on how the widget got focus while VS Code restored the editor.
+    await reviewWidget
+      .locator(".review-thread-reply-button")
+      .or(reviewWidget.locator(".comment-form .monaco-editor"))
+      .filter({ visible: true })
+      .first()
+      .click();
+    await expect(reviewWidget.locator(".comment-form .monaco-editor")).toBeVisible();
+    await window.keyboard.type("Already done");
+    await reviewWidget.getByRole("button", { name: "Reply" }).click();
+    await expect
+      .poll(async () => (await readComments())?.map((comment) => comment.body))
+      .toEqual(["Use a template literal", "Already done"]);
+
+    const firstComment = reviewWidget.locator(".review-comment", { hasText: "Use a template literal" });
+    await firstComment.hover();
+    await firstComment.getByRole("button", { name: "Edit" }).click();
+    await firstComment.locator(".edit-container .monaco-editor").click();
+    await window.keyboard.press("ControlOrMeta+A");
+    await window.keyboard.type("Use a template literal here");
+    await firstComment.getByRole("button", { name: "Save" }).click();
+    await expect
+      .poll(async () => (await readComments())?.map((comment) => comment.body))
+      .toEqual(["Use a template literal here", "Already done"]);
+    await expect(reviewWidget.locator(".comment-body", { hasText: "Use a template literal here" })).toBeVisible();
+    await window.screenshot({ path: testInfo.outputPath("thread-replied-and-edited.png") });
+
+    // Starting to edit another comment re-renders the thread; the unsaved text of the first edit must survive it.
+    const reply = reviewWidget.locator(".review-comment", { hasText: "Already done" });
+    await firstComment.hover();
+    await firstComment.getByRole("button", { name: "Edit" }).click();
+    await firstComment.locator(".edit-container .monaco-editor").click();
+    await window.keyboard.press("ControlOrMeta+A");
+    await window.keyboard.type("Unsaved draft");
+    await reply.hover();
+    await reply.getByRole("button", { name: "Edit" }).click();
+    await expect(reply.locator(".edit-container .monaco-editor")).toBeVisible();
+    await expect(firstComment.locator(".edit-container .monaco-editor")).toContainText("Unsaved draft");
+    await firstComment.getByRole("button", { name: "Cancel" }).click();
+    await reply.getByRole("button", { name: "Cancel" }).click();
+    await expect(reviewWidget.locator(".comment-body", { hasText: "Use a template literal here" })).toBeVisible();
+    expect((await readComments())?.map((comment) => comment.body)).toEqual(["Use a template literal here", "Already done"]);
+
+    await reply.hover();
+    await reply.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect
+      .poll(async () => (await readComments())?.map((comment) => comment.body))
+      .toEqual(["Use a template literal here"]);
+
+    await reviewWidget.getByRole("button", { name: "Delete Thread" }).click();
+    await expect.poll(async () => (await readThreads(workspacePath)).threads).toEqual([]);
+    await expect(window.locator(".review-widget")).toHaveCount(0);
+    await window.screenshot({ path: testInfo.outputPath("thread-deleted.png") });
+  } finally {
+    await app.close();
+  }
+});
