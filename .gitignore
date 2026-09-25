@@ -6,6 +6,7 @@ dist/
 # and by the prepack script of fusen-mcp so that npm puts them in its package.
 packages/extension/LICENSE
 packages/extension/README.md
+packages/extension/CHANGELOG.md
 packages/mcp-server/LICENSE
 packages/mcp-server/README.md
 .vscode-test/

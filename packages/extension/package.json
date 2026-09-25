@@ -2,7 +2,7 @@
   "name": "fusen",
   "displayName": "Fusen",
   "description": "Sticky notes on code lines for two-way review with AI agents",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "publisher": "bannzai",
   "license": "MIT",
@@ -184,7 +184,7 @@
   "scripts": {
     "build": "tsc -p .",
     "typecheck": "tsc -p . --noEmit",
-    "package": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node22 --external:vscode --outfile=out/extension.js && cp ../../LICENSE ../../README.md . && vsce package --no-dependencies",
+    "package": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node22 --external:vscode --outfile=out/extension.js && cp ../../LICENSE ../../README.md ../../CHANGELOG.md . && vsce package --no-dependencies",
     "check-vsix": "node scripts/check-vsix.mjs"
   },
   "dependencies": {
