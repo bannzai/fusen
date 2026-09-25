@@ -6,6 +6,7 @@
 #   GH_STUB_RUN_LIST_AFTER_DISPATCH  JSON returned by `gh run list` once `gh workflow run` was called (default: GH_STUB_RUN_LIST)
 #   GH_STUB_CONCLUSION               conclusion returned by `gh run view` (default: success)
 #   GH_STUB_ATTEMPT                  run attempt returned by `gh run view` (default: 1)
+#   GH_STUB_STARTED_AT               start time of that attempt returned by `gh run view` (default: before every artifact)
 #   GH_STUB_WATCH_FAILURES           number of first `gh run watch` calls that fail like a just-created run (default: 0)
 #   GH_STUB_ARTIFACTS                JSON returned by `gh api .../runs/<id>/artifacts` (default: one e2e-screenshots artifact, id 1)
 #   GH_STUB_NO_ARTIFACT              when set, the run has no artifacts
@@ -57,7 +58,10 @@ case "$1 $2" in
     fi
     echo "run completed"
     ;;
-  "run view") printf '{"conclusion":"%s","url":"https://github.com/o/r/actions/runs/%s","attempt":%s}\n' "${GH_STUB_CONCLUSION:-success}" "$3" "${GH_STUB_ATTEMPT:-1}" ;;
+  "run view")
+    printf '{"conclusion":"%s","url":"https://github.com/o/r/actions/runs/%s","attempt":%s,"startedAt":"%s"}\n' \
+      "${GH_STUB_CONCLUSION:-success}" "$3" "${GH_STUB_ATTEMPT:-1}" "${GH_STUB_STARTED_AT:-2026-09-25T00:00:00Z}"
+    ;;
   "workflow run") echo "Created workflow_dispatch event" ;;
   *) echo "unexpected gh call: $*" >&2; exit 99 ;;
 esac
@@ -178,7 +182,7 @@ rerun_artifacts='{"artifacts": [
   {"id": 3, "name": "fusen-vsix", "created_at": "2026-09-25T03:00:00Z", "expired": false},
   {"id": 2, "name": "e2e-screenshots", "created_at": "2026-09-25T02:00:00Z", "expired": false}
 ]}'
-GH_STUB_RUN_LIST="$runs" GH_STUB_ATTEMPT=2 GH_STUB_ARTIFACTS="$rerun_artifacts" \
+GH_STUB_RUN_LIST="$runs" GH_STUB_ATTEMPT=2 GH_STUB_STARTED_AT=2026-09-25T01:30:00Z GH_STUB_ARTIFACTS="$rerun_artifacts" \
   rerun_script --branch b --sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --find-timeout 0
 check "re-run attempt succeeds" exit_is 0
 check "re-run attempt is printed" stdout_has "RUN_ATTEMPT=2"
@@ -186,6 +190,13 @@ check "re-run attempt downloads the newest artifact" gh_called "actions/artifact
 check "re-run attempt does not download the first attempt's artifact" bash -c "! grep -qF 'actions/artifacts/1/zip' '$GH_STUB_LOG'"
 check "re-run attempt lists its own screenshot" stdout_has "SCREENSHOT=$out_root/e2e-200-2/activation-Fusen-activates/activation.png"
 check "re-run attempt does not list the previous attempt" bash -c "! grep -qF 'e2e-200-1' '$work_dir/stdout'"
+
+# An attempt that uploaded no screenshots (all e2e-screenshots artifacts are older than its start) gets none.
+GH_STUB_RUN_LIST="$runs" GH_STUB_ATTEMPT=3 GH_STUB_STARTED_AT=2026-09-25T02:30:00Z GH_STUB_ARTIFACTS="$rerun_artifacts" \
+  rerun_script --branch b --sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --find-timeout 0
+check "attempt without its own artifact exits 4" exit_is 4
+check "attempt without its own artifact downloads nothing" bash -c "! grep -qF '/zip' '$GH_STUB_LOG'"
+check "attempt without its own artifact is explained" stderr_has "artifact of run 200 attempt 3 (not uploaded by this attempt"
 
 run_script --run-id 42
 check "--run-id succeeds" exit_is 0

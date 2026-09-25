@@ -27,7 +27,7 @@ Run every command from the repository root. Scripts are referenced by repository
 
 Exit code 3 means no run was found or a `gh` call failed; the message says which. The usual cause is that the commit has not been pushed yet or the branch has no pull request (use `--dispatch`).
 
-Exit code 4 means the run finished but its artifact could not be downloaded, so there is nothing to look at. A run that failed before the `e2e` job uploaded anything ends here too; read `FAILED_LOG_COMMAND` if it was printed, otherwise rerun the script, which retries the download.
+Exit code 4 means the run finished but the latest attempt's artifact could not be downloaded, so there is nothing to look at. A run whose latest attempt failed before the `e2e` job uploaded anything ends here too, and so does a re-run of other jobs only: screenshots of an earlier attempt are never listed as the latest attempt's. Read `FAILED_LOG_COMMAND` if it was printed, otherwise rerun the script, which retries the download.
 
 ## Extending the E2E tests
 

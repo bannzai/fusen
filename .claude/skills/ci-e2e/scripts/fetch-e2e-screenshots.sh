@@ -25,8 +25,8 @@
 #   1  the run finished without success; its artifact is downloaded and the screenshots are listed
 #   2  invalid arguments
 #   3  no run was found, or a gh / git command failed
-#   4  the run finished, but its artifact could not be downloaded (missing, expired, or a network error);
-#      nothing is listed and the next call tries the download again
+#   4  the run finished, but the artifact of its latest attempt could not be downloaded (not uploaded by that
+#      attempt, expired, or a network error); nothing is listed and the next call tries the download again
 #
 # Idempotent: a run attempt whose artifact directory exists is not downloaded again; the directory is created
 # only after a complete download.
@@ -62,7 +62,7 @@ fail_run() {
 # Exits with the artifact-download code after removing the staging directory $partial_dir and its zip.
 fail_download() {
   rm -rf "$partial_dir" "$partial_dir.zip"
-  echo "error: could not download the $artifact_name artifact of run $run_id (missing, expired, or a network error)" >&2
+  echo "error: could not download the $artifact_name artifact of run $run_id attempt $run_attempt (not uploaded by this attempt, expired, or a network error)" >&2
   exit 4
 }
 
@@ -170,10 +170,11 @@ until gh run watch "$run_id" --interval 30 >&2; do
   watch_attempt=$((watch_attempt + 1))
 done
 
-run_json="$(gh run view "$run_id" --json conclusion,url,attempt)" || fail_run "gh run view failed for run $run_id"
+run_json="$(gh run view "$run_id" --json conclusion,url,attempt,startedAt)" || fail_run "gh run view failed for run $run_id"
 conclusion="$(jq -r '.conclusion' <<<"$run_json")"
 run_url="$(jq -r '.url' <<<"$run_json")"
 run_attempt="$(jq -r '.attempt' <<<"$run_json")"
+attempt_started_at="$(jq -r '.startedAt' <<<"$run_json")"
 
 echo "RUN_ID=$run_id"
 echo "RUN_ATTEMPT=$run_attempt"
@@ -184,8 +185,9 @@ if [ "$conclusion" != "success" ]; then
 fi
 
 # A re-run keeps the run id and uploads another artifact with the same name next to the old one, and
-# `gh run download -n` picks the old one (seen on run 36095625881), so the newest artifact is downloaded by id
-# into a directory per attempt.
+# `gh run download -n` picks the old one (seen on run 36095625881), so the artifact is downloaded by id into a
+# directory per attempt. Only an artifact created after the current attempt started belongs to it; when the attempt
+# uploaded none (for example it failed before the upload), an earlier attempt's screenshots are not shown as its own.
 # The artifact is downloaded into a staging directory and moved into place only after a complete download,
 # so an existing $dir always holds a complete artifact and a failed download is retried on the next call.
 dir="$out_root/e2e-$run_id-$run_attempt"
@@ -196,8 +198,9 @@ else
   rm -rf "$partial_dir" "$partial_dir.zip"
   mkdir -p "$partial_dir"
   artifact_id="$(gh api "repos/{owner}/{repo}/actions/runs/$run_id/artifacts?per_page=100" |
-    jq -r --arg name "$artifact_name" \
-      '[.artifacts[] | select(.name == $name and (.expired | not))] | sort_by(.created_at) | last | .id // empty')" ||
+    jq -r --arg name "$artifact_name" --arg started_at "$attempt_started_at" \
+      '[.artifacts[] | select(.name == $name and (.expired | not) and .created_at >= $started_at)]
+        | sort_by(.created_at) | last | .id // empty')" ||
     fail_download
   [ -n "$artifact_id" ] || fail_download
   gh api "repos/{owner}/{repo}/actions/artifacts/$artifact_id/zip" >"$partial_dir.zip" || fail_download
