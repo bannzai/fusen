@@ -7,7 +7,8 @@
 #                            [--out-root <dir>] [--find-timeout <seconds>]
 #
 #   --branch        Branch whose runs are searched. Default: the current git branch.
-#   --sha           Commit whose run is picked. Default: HEAD. Push it first.
+#   --sha           Commit whose run is picked, as a full or abbreviated (7+ characters) SHA. Default: HEAD.
+#                   Push it first.
 #   --dispatch      Start a new run with `gh workflow run ci.yml --ref <branch>` (for a branch without a
 #                   pull request) and pick that run instead of matching --sha.
 #   --run-id        Use this run and skip the search.
@@ -101,16 +102,21 @@ fi
 if [ "$dispatch" = true ] && [ -n "$sha" ]; then
   fail_usage "--dispatch picks the new run, so it cannot be combined with --sha"
 fi
+# GitHub reports the full lowercase SHA, so an abbreviated one is matched as a prefix.
+# 7 characters is git's default abbreviation length.
+sha="$(tr 'A-F' 'a-f' <<<"$sha")"
+[[ -z "$sha" || "$sha" =~ ^[0-9a-f]{7,40}$ ]] || fail_usage "--sha must be a commit SHA of 7 to 40 hex characters: $sha"
 
 if [ -z "$out_root" ]; then
   out_root="$(git rev-parse --show-toplevel)/tmp" || fail_run "not in a git repository; pass --out-root"
 fi
 
 # Prints the run id matching the jq filter $1 among the newest runs of the branch, or nothing.
+# The filter reads the commit as $sha and the newest dispatch run before dispatching as $newest.
 find_run_id() {
   gh run list --workflow "$workflow_file" --branch "$branch" --limit 20 \
     --json databaseId,headSha,event,createdAt,url |
-    jq -r "[.[] | select($1)] | first | .databaseId // empty"
+    jq -r --arg sha "$sha" --argjson newest "${newest_before:-0}" "[.[] | select($1)] | first | .databaseId // empty"
 }
 
 if [ -z "$run_id" ]; then
@@ -124,12 +130,12 @@ if [ -z "$run_id" ]; then
     newest_before="$(gh run list --workflow "$workflow_file" --branch "$branch" --event workflow_dispatch --limit 1 \
       --json databaseId | jq -r 'first | .databaseId // 0')" || fail_run "gh run list failed"
     gh workflow run "$workflow_file" --ref "$branch" >&2 || fail_run "gh workflow run failed"
-    filter=".event == \"workflow_dispatch\" and .databaseId > $newest_before"
+    filter='.event == "workflow_dispatch" and .databaseId > $newest'
   else
     if [ -z "$sha" ]; then
       sha="$(git rev-parse HEAD)" || fail_run "cannot read HEAD; pass --sha"
     fi
-    filter=".headSha == \"$sha\""
+    filter='.headSha | startswith($sha)'
   fi
 
   waited=0

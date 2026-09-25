@@ -101,9 +101,9 @@ stderr_has() { grep -qF -- "$1" "$work_dir/stderr"; }
 gh_called() { grep -qF -- "$1" "$GH_STUB_LOG"; }
 
 runs='[
-  {"databaseId": 300, "headSha": "ccc", "event": "pull_request", "createdAt": "2026-09-25T03:00:00Z", "url": "u300"},
-  {"databaseId": 200, "headSha": "bbb", "event": "pull_request", "createdAt": "2026-09-25T02:00:00Z", "url": "u200"},
-  {"databaseId": 100, "headSha": "aaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T01:00:00Z", "url": "u100"}
+  {"databaseId": 300, "headSha": "cccccccccccccccccccccccccccccccccccccccc", "event": "pull_request", "createdAt": "2026-09-25T03:00:00Z", "url": "u300"},
+  {"databaseId": 200, "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "event": "pull_request", "createdAt": "2026-09-25T02:00:00Z", "url": "u200"},
+  {"databaseId": 100, "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T01:00:00Z", "url": "u100"}
 ]'
 
 # Argument validation
@@ -123,18 +123,28 @@ check "option without a value exits 2" exit_is 2
 run_script --run-id 1 --dispatch
 check "--run-id with --dispatch exits 2" exit_is 2
 
-run_script --dispatch --sha aaa --branch b
+run_script --dispatch --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --branch b
 check "--dispatch with --sha exits 2" exit_is 2
 
 run_script --help
 check "--help exits 0" exit_is 0
 
 # Run lookup
-GH_STUB_RUN_LIST='[]' run_script --branch b --sha aaa --find-timeout 0
+GH_STUB_RUN_LIST='[]' run_script --branch b --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --find-timeout 0
 check "no run exits 3" exit_is 3
-check "no run explains how to start one" stderr_has "no ci.yml run found for aaa on b"
+check "no run explains how to start one" stderr_has "no ci.yml run found for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa on b"
 
-GH_STUB_RUN_LIST="$runs" run_script --branch b --sha bbb --find-timeout 0
+run_script --branch b --sha main --find-timeout 0
+check "non-SHA --sha exits 2" exit_is 2
+
+run_script --branch b --sha abc123 --find-timeout 0
+check "--sha shorter than 7 characters exits 2" exit_is 2
+
+GH_STUB_RUN_LIST="$runs" run_script --branch b --sha BBBBBBB --find-timeout 0
+check "abbreviated uppercase --sha succeeds" exit_is 0
+check "abbreviated --sha picks the run by prefix" stdout_has "RUN_ID=200"
+
+GH_STUB_RUN_LIST="$runs" run_script --branch b --sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --find-timeout 0
 check "run matching --sha succeeds" exit_is 0
 check "run matching --sha is picked" stdout_has "RUN_ID=200"
 check "run URL is printed" stdout_has "RUN_URL=https://github.com/o/r/actions/runs/200"
@@ -142,12 +152,12 @@ check "conclusion is printed" stdout_has "CONCLUSION=success"
 check "screenshot is listed" stdout_has "SCREENSHOT=$out_root/e2e-200-1/activation-Fusen-activates/activation.png"
 check "artifact is downloaded by name" gh_called "gh run download 200 -n e2e-screenshots -D $out_root/e2e-200-1"
 
-GH_STUB_RUN_LIST="$runs" rerun_script --branch b --sha bbb --find-timeout 0
+GH_STUB_RUN_LIST="$runs" rerun_script --branch b --sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --find-timeout 0
 check "second run succeeds" exit_is 0
 check "second run does not download again" bash -c "! grep -qF 'run download' '$GH_STUB_LOG'"
 check "second run still lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-200-1/activation-Fusen-activates/activation.png"
 
-GH_STUB_RUN_LIST="$runs" GH_STUB_ATTEMPT=2 rerun_script --branch b --sha bbb --find-timeout 0
+GH_STUB_RUN_LIST="$runs" GH_STUB_ATTEMPT=2 rerun_script --branch b --sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --find-timeout 0
 check "re-run attempt succeeds" exit_is 0
 check "re-run attempt is printed" stdout_has "RUN_ATTEMPT=2"
 check "re-run attempt downloads its own artifact" gh_called "gh run download 200 -n e2e-screenshots -D $out_root/e2e-200-2"
@@ -160,10 +170,10 @@ check "--run-id skips the search" bash -c "! grep -qF 'run list' '$GH_STUB_LOG'"
 check "--run-id is used" stdout_has "RUN_ID=42"
 
 # Dispatch: the dispatch run that existed before dispatching (100) must not be picked.
-dispatch_runs='[{"databaseId": 100, "headSha": "aaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T01:00:00Z", "url": "u100"}]'
+dispatch_runs='[{"databaseId": 100, "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T01:00:00Z", "url": "u100"}]'
 runs_after_dispatch='[
-  {"databaseId": 400, "headSha": "aaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T04:00:00Z", "url": "u400"},
-  {"databaseId": 100, "headSha": "aaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T01:00:00Z", "url": "u100"}
+  {"databaseId": 400, "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T04:00:00Z", "url": "u400"},
+  {"databaseId": 100, "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T01:00:00Z", "url": "u100"}
 ]'
 GH_STUB_RUN_LIST="$dispatch_runs" GH_STUB_RUN_LIST_AFTER_DISPATCH="$runs_after_dispatch" \
   run_script --branch b --dispatch --find-timeout 0
