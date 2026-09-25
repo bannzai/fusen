@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import {
   type FusenComment,
@@ -9,6 +10,7 @@ import {
   deletePendingProposal,
   deleteThread,
   isPendingReply,
+  pendingDirectoryPath,
   pendingProposalFilePath,
   promptFilePath,
   readPendingProposals,
@@ -89,8 +91,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const storedProposals = new Map<string, StoredProposal>();
   // The editor thread of each proposed thread, keyed like `storedProposals`.
   const proposalThreads = new Map<string, vscode.CommentThread>();
-  // The file watcher of `.fusen/_pending/` of each workspace folder, keyed by the folder's path.
+  // The file watcher of `.fusen/` of each loaded workspace folder, keyed by the folder's path.
   const proposalWatchers = new Map<string, vscode.FileSystemWatcher>();
+  // The modification time of `.fusen/_pending/` last seen for each workspace folder, or `null` while it does not exist;
+  // see `reloadProposalsIfPendingDirectoryChanged`.
+  const pendingDirectoryModifiedTimes = new Map<string, number | null>();
   // Problems already reported, so that re-reading `.fusen/_pending/` on every change does not repeat them.
   const reportedProblems = new Set<string>();
   // The last change queued to the proposals; see `changeProposals`.
@@ -307,12 +312,30 @@ export function activate(context: vscode.ExtensionContext): void {
     return stored;
   }
 
-  /** Watches `.fusen/_pending/` of `workspaceFolders` and shows the proposals already in it, after their threads. */
+  /**
+   * Re-reads `.fusen/_pending/` of the workspace folder at `workspaceRoot` when the directory's modification time
+   * differs from the last one seen. Creating, renaming into place or deleting a proposal file changes it.
+   */
+  async function reloadProposalsIfPendingDirectoryChanged(workspaceRoot: string): Promise<void> {
+    const modifiedTime = await stat(pendingDirectoryPath(workspaceRoot)).then(
+      (stats) => stats.mtimeMs,
+      // A directory that cannot be read has no proposals to show, the same as one that does not exist.
+      () => null,
+    );
+    if (pendingDirectoryModifiedTimes.get(workspaceRoot) === modifiedTime) {
+      return;
+    }
+    pendingDirectoryModifiedTimes.set(workspaceRoot, modifiedTime);
+    await changeProposals(() => reloadProposals(workspaceRoot));
+  }
+
+  /** Watches `.fusen/` of `workspaceFolders` and shows the proposals already in `.fusen/_pending/`, after their threads. */
   function loadWorkspaceFolders(workspaceFolders: readonly vscode.WorkspaceFolder[]): void {
     for (const workspaceFolder of workspaceFolders) {
       const workspaceRoot = workspaceFolder.uri.fsPath;
-      // The core writes a temporary file and renames it into place, so `*.json` sees only complete proposals.
-      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(workspaceFolder, ".fusen/_pending/*.json"));
+      // The whole `.fusen/` is watched, because the events of files written into a directory created in the same instant,
+      // as the first proposal creates `.fusen/_pending/`, can be missed while the creation of the directories is reported.
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(workspaceFolder, ".fusen/**"));
       const reload = () => {
         changeProposals(() => reloadProposals(workspaceRoot)).catch(reportError("could not read proposals"));
       };
@@ -330,10 +353,20 @@ export function activate(context: vscode.ExtensionContext): void {
     }).catch(reportError("could not restore notes"));
   }
 
+  // VS Code's file watcher can miss changes, for example ones made shortly after startup, so the modification time
+  // of `.fusen/_pending/` is also checked on an interval. Two seconds keeps a missed proposal from waiting long
+  // enough for a person to notice, for the cost of one stat call per workspace folder.
+  const pendingDirectoryCheck = setInterval(() => {
+    for (const workspaceRoot of proposalWatchers.keys()) {
+      reloadProposalsIfPendingDirectoryChanged(workspaceRoot).catch(reportError("could not read proposals"));
+    }
+  }, 2_000);
+
   context.subscriptions.push(
     statusBarItem,
     commentController,
     { dispose: () => proposalWatchers.forEach((watcher) => watcher.dispose()) },
+    { dispose: () => clearInterval(pendingDirectoryCheck) },
     vscode.workspace.onDidChangeWorkspaceFolders(({ added, removed }) => {
       // A thread or proposal whose folder left the workspace has no `.fusen/` to save to any more.
       const removedWorkspaceRoots = new Set(removed.map((workspaceFolder) => workspaceFolder.uri.fsPath));
@@ -352,6 +385,7 @@ export function activate(context: vscode.ExtensionContext): void {
       for (const workspaceRoot of removedWorkspaceRoots) {
         proposalWatchers.get(workspaceRoot)?.dispose();
         proposalWatchers.delete(workspaceRoot);
+        pendingDirectoryModifiedTimes.delete(workspaceRoot);
       }
       loadWorkspaceFolders(added);
     }),
