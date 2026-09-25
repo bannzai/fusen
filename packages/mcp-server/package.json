@@ -1,0 +1,30 @@
+{
+  "name": "fusen-mcp",
+  "description": "MCP server that lets AI agents read and post Fusen sticky notes on code lines",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bannzai/fusen"
+  },
+  "type": "module",
+  "bin": {
+    "fusen-mcp": "./out/index.js"
+  },
+  "files": [
+    "out"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "test": "tsc -p . && node --test \"out/**/*.test.js\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "zod": "^4.6.5"
+  }
+}
