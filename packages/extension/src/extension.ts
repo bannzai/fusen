@@ -60,7 +60,8 @@ export function activate(context: vscode.ExtensionContext): void {
   // and keep the lines and code stored in `.fusen/`, so that they are placed again if the code comes back.
   const unlocatedThreads = new WeakSet<vscode.CommentThread>();
   // The code on the lines of each thread as the editor last showed it, including unsaved edits. When an edit deletes
-  // the code, this is what an undo brings back, so it is searched for instead of the code stored for the file on disk.
+  // the code, this is what an undo brings back, so an unsaved document is searched for it rather than for the stored code.
+  // It also stands in for the stored code of a thread started on unsaved changes, which has none until the document is saved.
   const editorCodes = new WeakMap<vscode.CommentThread, string[]>();
 
   /** Returns the stored thread behind `commentThread`. Throws for a thread that has not been saved yet. */
@@ -127,29 +128,6 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   /**
-   * Shows `commentThread` on `lineRange` of `fileText`, the current text of its file.
-   * When `fileText` is also the text on disk (`saved`), the lines and their code are written to `.fusen/` if they changed.
-   * Unsaved text is not written, because the stored line numbers must refer to the file that the MCP server and agents read.
-   */
-  async function place(commentThread: vscode.CommentThread, lineRange: LineRange, fileText: string, saved: boolean): Promise<void> {
-    // The thread was deleted while this change waited in the queue.
-    if (!storedThreads.has(commentThread)) {
-      return;
-    }
-    unlocatedThreads.delete(commentThread);
-    commentThread.range = editorRange(lineRange);
-    const code = codeAt(fileText, lineRange);
-    if (code) {
-      editorCodes.set(commentThread, code);
-    }
-    if (saved) {
-      await writeLocation(commentThread, lineRange, fileText);
-    } else {
-      render(commentThread);
-    }
-  }
-
-  /**
    * Writes `lineRange` of `fileText`, the text of the file on disk, and the code on those lines to `.fusen/` if they changed.
    * The range shown in the editor is left as it is, because edits made after `fileText` was read have already moved it.
    */
@@ -174,32 +152,39 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   /**
-   * Finds the code of `commentThread` in `fileText`, the current text of its file, and places the thread there.
-   * The code is `code` if given, or else the stored code.
+   * Finds the code of `commentThread` in `fileText`, the current text of its file, and shows the thread there.
+   * The code searched for is `code` if given, else the stored code, else the code the editor last showed on the thread.
+   * Only a thread that has neither, such as one written by an agent, takes the code at its stored lines.
    * The thread is shown as location unknown when the code is not in the file or the file (`fileText` undefined) is gone.
+   *
+   * When `fileText` is also the text on disk (`saved`), writing the lines and their code to `.fusen/` is queued.
+   * Unsaved text is not written, because the stored line numbers must refer to the file that the MCP server and agents read.
+   * The thread is shown synchronously, so that an edit reported after `fileText` was read moves it from the new place.
    */
-  async function relocate(
-    commentThread: vscode.CommentThread,
-    fileText: string | undefined,
-    saved: boolean,
-    code?: readonly string[],
-  ): Promise<void> {
+  function relocate(commentThread: vscode.CommentThread, fileText: string | undefined, saved: boolean, code?: readonly string[]): void {
     const stored = storedThreads.get(commentThread);
-    // The thread was deleted while this change waited in the queue.
     if (!stored) {
       return;
     }
     const { fusenThread } = stored;
-    if (fileText !== undefined) {
-      const threadCode = code ?? fusenThread.code ?? codeAt(fileText, fusenThread);
-      const lineRange = threadCode && locateCode(fileText, threadCode, fusenThread.startLine);
-      if (lineRange) {
-        await place(commentThread, lineRange, fileText, saved);
-        return;
-      }
+    const threadCode =
+      fileText === undefined ? undefined : (code ?? fusenThread.code ?? editorCodes.get(commentThread) ?? codeAt(fileText, fusenThread));
+    const lineRange = fileText !== undefined && threadCode ? locateCode(fileText, threadCode, fusenThread.startLine) : undefined;
+    if (fileText === undefined || !lineRange) {
+      unlocatedThreads.add(commentThread);
+      render(commentThread);
+      return;
     }
-    unlocatedThreads.add(commentThread);
+    unlocatedThreads.delete(commentThread);
+    commentThread.range = editorRange(lineRange);
+    const placedCode = codeAt(fileText, lineRange);
+    if (placedCode) {
+      editorCodes.set(commentThread, placedCode);
+    }
     render(commentThread);
+    if (saved) {
+      changeThreadReportingErrors(commentThread, () => writeLocation(commentThread, lineRange, fileText));
+    }
   }
 
   /** Queues `change` for `commentThread` like `changeThread`, reporting a failure, for changes that no command awaits. */
@@ -243,7 +228,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const { text, saved } = await readFileText(uri);
     for (const commentThread of commentThreads) {
-      changeThreadReportingErrors(commentThread, () => relocate(commentThread, text, saved));
+      relocate(commentThread, text, saved);
     }
   }
 
@@ -314,7 +299,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // or the edits were undone. The stored code, written for the file on disk, tells where each thread is.
         const text = document.getText();
         for (const commentThread of storedThreadsOn(document.uri)) {
-          changeThreadReportingErrors(commentThread, () => relocate(commentThread, text, true));
+          relocate(commentThread, text, true);
         }
         return;
       }
@@ -322,9 +307,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (unlocatedThreads.has(commentThread)) {
           // The edit may have brought the code back, for example by undoing its deletion. The document is not saved,
           // so the thread is only shown there until the save writes it.
-          const text = document.getText();
-          const code = editorCodes.get(commentThread);
-          changeThreadReportingErrors(commentThread, () => relocate(commentThread, text, false, code));
+          relocate(commentThread, document.getText(), false, editorCodes.get(commentThread));
           continue;
         }
         if (!commentThread.range) {
@@ -350,10 +333,12 @@ export function activate(context: vscode.ExtensionContext): void {
       // Read at the time of the save, because the document can be edited again before the queued change runs.
       const text = document.getText();
       for (const commentThread of storedThreadsOn(document.uri)) {
-        const range = unlocatedThreads.has(commentThread) ? undefined : commentThread.range;
-        changeThreadReportingErrors(commentThread, () =>
-          range ? writeLocation(commentThread, editorLineRange(range), text) : relocate(commentThread, text, true),
-        );
+        const range = commentThread.range;
+        if (unlocatedThreads.has(commentThread) || !range) {
+          relocate(commentThread, text, true);
+        } else {
+          changeThreadReportingErrors(commentThread, () => writeLocation(commentThread, editorLineRange(range), text));
+        }
       }
     }),
     vscode.workspace.onDidOpenTextDocument((document) => {
@@ -372,7 +357,7 @@ export function activate(context: vscode.ExtensionContext): void {
     fileSystemWatcher.onDidDelete((uri) => {
       // An open document keeps its text after the file is deleted, so the file is gone even if the document still has the code.
       for (const commentThread of storedThreadsOn(uri)) {
-        changeThreadReportingErrors(commentThread, () => relocate(commentThread, undefined, true));
+        relocate(commentThread, undefined, true);
       }
     }),
     vscode.commands.registerCommand("fusen.createThread", (reply: vscode.CommentReply) =>
@@ -391,6 +376,10 @@ export function activate(context: vscode.ExtensionContext): void {
         const lineRange = editorLineRange(commentThread.range);
         // `openTextDocument` returns the document the note was started in, which is open in the editor.
         const document = await vscode.workspace.openTextDocument(commentThread.uri);
+        const code = codeAt(document.getText(), lineRange);
+        if (code) {
+          editorCodes.set(commentThread, code);
+        }
         await save(commentThread, {
           workspaceRoot: workspaceFolder.uri.fsPath,
           fusenThread: {
@@ -399,7 +388,7 @@ export function activate(context: vscode.ExtensionContext): void {
             file: path.relative(workspaceFolder.uri.fsPath, commentThread.uri.fsPath).split(path.sep).join("/"),
             ...lineRange,
             // Unsaved code is not in the file on disk, so it is left out until saving the document writes the code of the lines.
-            code: document.isDirty ? undefined : codeAt(document.getText(), lineRange),
+            code: document.isDirty ? undefined : code,
             comments: [humanComment(reply.text)],
           },
         });
