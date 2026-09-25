@@ -42,7 +42,17 @@ export async function readFusenDirectory<T extends { id: string }>(
   for (const fileName of fileNames.filter((name) => name.endsWith(fusenFileExtension)).sort()) {
     const filePath = path.join(directoryPath, fileName);
     try {
-      const value = parse(JSON.parse(await readFile(filePath, "utf8")));
+      const text = await readFile(filePath, "utf8").catch((error: unknown) => {
+        if (isErrnoException(error) && error.code === "ENOENT") {
+          return undefined;
+        }
+        throw error;
+      });
+      // A file deleted after the directory was listed, for example a proposal just approved, is gone rather than broken.
+      if (text === undefined) {
+        continue;
+      }
+      const value = parse(JSON.parse(text));
       if (`${value.id}${fusenFileExtension}` !== fileName) {
         throw new Error(`Id ${value.id} does not match the file name`);
       }
