@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Finds the CI run (.github/workflows/ci.yml) for a commit, waits for it to finish, downloads its
-# e2e-screenshots artifact and lists the PNG files in it.
+# Finds the CI run (.github/workflows/ci.yml) for a commit, waits for it to finish, downloads the
+# screenshots artifact of one editor's E2E job and lists the PNG files in it.
 #
 # Usage:
 #   fetch-e2e-screenshots.sh [--branch <name>] [--sha <commit>] [--dispatch] [--run-id <id>]
-#                            [--out-root <dir>] [--find-timeout <seconds>]
+#                            [--editor vscode|cursor] [--out-root <dir>] [--find-timeout <seconds>]
 #
 #   --branch        Branch whose runs are searched. Default: the current git branch.
 #   --sha           Commit whose run is picked, as a full or abbreviated (7+ characters) SHA. Default: HEAD.
@@ -12,7 +12,10 @@
 #   --dispatch      Start a new run with `gh workflow run ci.yml --ref <branch>` (for a branch without a
 #                   pull request) and pick that run instead of matching --sha.
 #   --run-id        Use this run and skip the search.
-#   --out-root      The artifact goes to <out-root>/e2e-<run id>-<run attempt>. Default: <repository root>/tmp.
+#   --editor        Whose screenshots to download: vscode (job e2e, artifact e2e-screenshots) or cursor
+#                   (job e2e-cursor, artifact e2e-cursor-screenshots). Default: vscode.
+#   --out-root      The artifact goes to <out-root>/e2e-<run id>-<run attempt> for vscode and
+#                   <out-root>/e2e-cursor-<run id>-<run attempt> for cursor. Default: <repository root>/tmp.
 #   --find-timeout  How long to keep looking for a run that has not been created yet. Default: 120.
 #
 # Output on stdout, one KEY=value per line:
@@ -34,7 +37,6 @@
 set -euo pipefail
 
 readonly workflow_file="ci.yml"
-readonly artifact_name="e2e-screenshots"
 # 10 seconds keeps the number of API calls low while a just-pushed run usually appears within one or two polls.
 readonly poll_interval_seconds=10
 # Right after a run is created, `gh run watch` can fail with "failed to get jobs: HTTP 404" (seen on run 36094669438);
@@ -70,18 +72,21 @@ branch=""
 sha=""
 dispatch=false
 run_id=""
+# VS Code is the editor Fusen is built against and the one the e2e job runs, so its screenshots are the usual evidence.
+editor="vscode"
 out_root=""
 # 120 seconds covers the delay between a push and GitHub creating the pull_request run, including queueing.
 find_timeout=120
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --branch | --sha | --run-id | --out-root | --find-timeout)
+    --branch | --sha | --run-id | --editor | --out-root | --find-timeout)
       [ $# -ge 2 ] || fail_usage "$1 needs a value"
       case "$1" in
         --branch) branch="$2" ;;
         --sha) sha="$2" ;;
         --run-id) run_id="$2" ;;
+        --editor) editor="$2" ;;
         --out-root) out_root="$2" ;;
         --find-timeout) find_timeout="$2" ;;
       esac
@@ -102,6 +107,17 @@ while [ $# -gt 0 ]; do
 done
 
 [[ -z "$run_id" || "$run_id" =~ ^[0-9]+$ ]] || fail_usage "--run-id must be a number: $run_id"
+case "$editor" in
+  vscode)
+    artifact_name="e2e-screenshots"
+    dir_prefix="e2e"
+    ;;
+  cursor)
+    artifact_name="e2e-cursor-screenshots"
+    dir_prefix="e2e-cursor"
+    ;;
+  *) fail_usage "--editor must be vscode or cursor: $editor" ;;
+esac
 [[ "$find_timeout" =~ ^[0-9]+$ ]] || fail_usage "--find-timeout must be a non-negative integer: $find_timeout"
 if [ -n "$run_id" ] && { [ "$dispatch" = true ] || [ -n "$sha" ]; }; then
   fail_usage "--run-id cannot be combined with --dispatch or --sha"
@@ -190,7 +206,7 @@ fi
 # uploaded none (for example it failed before the upload), an earlier attempt's screenshots are not shown as its own.
 # The artifact is downloaded into a staging directory and moved into place only after a complete download,
 # so an existing $dir always holds a complete artifact and a failed download is retried on the next call.
-dir="$out_root/e2e-$run_id-$run_attempt"
+dir="$out_root/$dir_prefix-$run_id-$run_attempt"
 if [ -d "$dir" ]; then
   echo "$dir already has the artifact; skipping the download" >&2
 else

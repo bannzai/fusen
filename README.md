@@ -149,7 +149,9 @@ npm test
 xvfb-run -a npm run test:e2e   # Linux; on macOS run `npm run test:e2e`
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same commands on every pull request, uploads E2E screenshots as the `e2e-screenshots` artifact and the packaged extension as the `fusen-vsix` artifact.
+To run the E2E tests in another editor build such as Cursor, set `FUSEN_E2E_EXECUTABLE_PATH` to its executable. On Linux x64, `bash e2e/scripts/download-cursor.sh <dir>` downloads the latest stable Cursor and prints that path.
+
+CI (`.github/workflows/ci.yml`) runs the same commands on every pull request, runs the E2E tests in both VS Code and Cursor, uploads their screenshots as the `e2e-screenshots` and `e2e-cursor-screenshots` artifacts and the packaged extension as the `fusen-vsix` artifact.
 
 Design notes: [documents/PROJECT.md](documents/PROJECT.md)
 
