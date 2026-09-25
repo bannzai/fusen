@@ -20,7 +20,13 @@ const allowedModules = new Set(["vscode", ...builtinModules, ...builtinModules.m
 const failures = [];
 for (const functionName of fusenCoreFunctions) {
   if (!new RegExp(`function ${functionName}\\(`).test(entrySource)) {
-    failures.push(`${entryPath} does not define ${functionName} from fusen-core`);
+    const mentions = entrySource
+      .split("\n")
+      .filter((line) => line.includes(functionName))
+      .slice(0, 3)
+      .map((line) => `\n  ${line.trim().slice(0, 160)}`)
+      .join("");
+    failures.push(`${entryPath} does not define ${functionName} from fusen-core; lines mentioning it:${mentions || " none"}`);
   }
 }
 const requiredModules = new Set(
