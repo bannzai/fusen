@@ -7,7 +7,9 @@
 #   GH_STUB_CONCLUSION               conclusion returned by `gh run view` (default: success)
 #   GH_STUB_ATTEMPT                  run attempt returned by `gh run view` (default: 1)
 #   GH_STUB_WATCH_FAILURES           number of first `gh run watch` calls that fail like a just-created run (default: 0)
-#   GH_STUB_NO_ARTIFACT              when set, `gh run download` leaves a partial download behind and fails
+#   GH_STUB_ARTIFACTS                JSON returned by `gh api .../runs/<id>/artifacts` (default: one e2e-screenshots artifact, id 1)
+#   GH_STUB_NO_ARTIFACT              when set, the run has no artifacts
+#   GH_STUB_BROKEN_ZIP               when set, `gh api .../artifacts/<id>/zip` writes a partial download and fails
 set -euo pipefail
 
 script="$(cd "$(dirname "$0")/.." && pwd)/fetch-e2e-screenshots.sh"
@@ -18,6 +20,28 @@ mkdir -p "$work_dir/bin"
 cat >"$work_dir/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "gh $*" >>"$GH_STUB_LOG"
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */actions/runs/*/artifacts*)
+      if [ -n "${GH_STUB_NO_ARTIFACT:-}" ]; then
+        echo '{"artifacts": []}'
+      else
+        # A run that was not re-run has exactly one e2e-screenshots artifact.
+        default_artifacts='{"artifacts": [{"id": 1, "name": "e2e-screenshots", "created_at": "2026-09-25T01:00:00Z", "expired": false}]}'
+        echo "${GH_STUB_ARTIFACTS:-$default_artifacts}"
+      fi
+      ;;
+    */actions/artifacts/*/zip)
+      [ -z "${GH_STUB_BROKEN_ZIP:-}" ] || { printf 'PK partial'; exit 1; }
+      zip_root="$(mktemp -d)"
+      mkdir -p "$zip_root/activation-Fusen-activates"
+      : >"$zip_root/activation-Fusen-activates/activation.png"
+      (cd "$zip_root" && zip -q -r - .)
+      ;;
+    *) echo "unexpected gh api call: $*" >&2; exit 99 ;;
+  esac
+  exit 0
+fi
 case "$1 $2" in
   "run list")
     if grep -qF "gh workflow run" "$GH_STUB_LOG"; then
@@ -34,16 +58,6 @@ case "$1 $2" in
     echo "run completed"
     ;;
   "run view") printf '{"conclusion":"%s","url":"https://github.com/o/r/actions/runs/%s","attempt":%s}\n' "${GH_STUB_CONCLUSION:-success}" "$3" "${GH_STUB_ATTEMPT:-1}" ;;
-  "run download")
-    while [ $# -gt 0 ]; do
-      if [ "$1" = "-D" ]; then dir="$2"; fi
-      shift
-    done
-    mkdir -p "$dir/activation-Fusen-activates"
-    : >"$dir/activation-Fusen-activates/activation.png"
-    # Leaves a partial download behind, like an interrupted transfer.
-    [ -z "${GH_STUB_NO_ARTIFACT:-}" ] || { echo "no artifact matches" >&2; exit 1; }
-    ;;
   "workflow run") echo "Created workflow_dispatch event" ;;
   *) echo "unexpected gh call: $*" >&2; exit 99 ;;
 esac
@@ -150,17 +164,26 @@ check "run matching --sha is picked" stdout_has "RUN_ID=200"
 check "run URL is printed" stdout_has "RUN_URL=https://github.com/o/r/actions/runs/200"
 check "conclusion is printed" stdout_has "CONCLUSION=success"
 check "screenshot is listed" stdout_has "SCREENSHOT=$out_root/e2e-200-1/activation-Fusen-activates/activation.png"
-check "artifact is downloaded by name" gh_called "gh run download 200 -n e2e-screenshots -D $out_root/e2e-200-1"
+check "artifact of the run is looked up" gh_called "actions/runs/200/artifacts"
+check "artifact is downloaded by id" gh_called "actions/artifacts/1/zip"
 
 GH_STUB_RUN_LIST="$runs" rerun_script --branch b --sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --find-timeout 0
 check "second run succeeds" exit_is 0
-check "second run does not download again" bash -c "! grep -qF 'run download' '$GH_STUB_LOG'"
+check "second run does not download again" bash -c "! grep -qF 'artifacts' '$GH_STUB_LOG'"
 check "second run still lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-200-1/activation-Fusen-activates/activation.png"
 
-GH_STUB_RUN_LIST="$runs" GH_STUB_ATTEMPT=2 rerun_script --branch b --sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --find-timeout 0
+# A re-run leaves the first attempt's artifact next to the new one with the same name; the newest one is used.
+rerun_artifacts='{"artifacts": [
+  {"id": 1, "name": "e2e-screenshots", "created_at": "2026-09-25T01:00:00Z", "expired": false},
+  {"id": 3, "name": "fusen-vsix", "created_at": "2026-09-25T03:00:00Z", "expired": false},
+  {"id": 2, "name": "e2e-screenshots", "created_at": "2026-09-25T02:00:00Z", "expired": false}
+]}'
+GH_STUB_RUN_LIST="$runs" GH_STUB_ATTEMPT=2 GH_STUB_ARTIFACTS="$rerun_artifacts" \
+  rerun_script --branch b --sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --find-timeout 0
 check "re-run attempt succeeds" exit_is 0
 check "re-run attempt is printed" stdout_has "RUN_ATTEMPT=2"
-check "re-run attempt downloads its own artifact" gh_called "gh run download 200 -n e2e-screenshots -D $out_root/e2e-200-2"
+check "re-run attempt downloads the newest artifact" gh_called "actions/artifacts/2/zip"
+check "re-run attempt does not download the first attempt's artifact" bash -c "! grep -qF 'actions/artifacts/1/zip' '$GH_STUB_LOG'"
 check "re-run attempt lists its own screenshot" stdout_has "SCREENSHOT=$out_root/e2e-200-2/activation-Fusen-activates/activation.png"
 check "re-run attempt does not list the previous attempt" bash -c "! grep -qF 'e2e-200-1' '$work_dir/stdout'"
 
@@ -210,9 +233,13 @@ check "failed download lists nothing" bash -c "! grep -q '^SCREENSHOT=' '$work_d
 check "failed download leaves no artifact directory" bash -c "[ ! -e '$out_root/e2e-8-1' ] && [ ! -e '$out_root/e2e-8-1.partial' ]"
 
 rerun_script --run-id 8
-check "download is retried after a failure" gh_called "gh run download 8"
+check "download is retried after a failure" gh_called "actions/artifacts/1/zip"
 check "retried download succeeds" exit_is 0
 check "retried download lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-8-1/activation-Fusen-activates/activation.png"
+
+GH_STUB_BROKEN_ZIP=1 run_script --run-id 10
+check "broken download exits 4" exit_is 4
+check "broken download leaves nothing behind" bash -c "[ ! -e '$out_root/e2e-10-1' ] && [ ! -e '$out_root/e2e-10-1.partial' ] && [ ! -e '$out_root/e2e-10-1.partial.zip' ]"
 
 GH_STUB_CONCLUSION=failure GH_STUB_NO_ARTIFACT=1 run_script --run-id 9
 check "failed run without an artifact exits 4" exit_is 4

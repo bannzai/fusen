@@ -30,7 +30,7 @@
 #
 # Idempotent: a run attempt whose artifact directory exists is not downloaded again; the directory is created
 # only after a complete download.
-# Requires gh (authenticated), git and jq.
+# Requires gh (authenticated), git, jq and unzip.
 set -euo pipefail
 
 readonly workflow_file="ci.yml"
@@ -57,6 +57,13 @@ fail_usage() {
 fail_run() {
   echo "error: $1" >&2
   exit 3
+}
+
+# Exits with the artifact-download code after removing the staging directory $partial_dir and its zip.
+fail_download() {
+  rm -rf "$partial_dir" "$partial_dir.zip"
+  echo "error: could not download the $artifact_name artifact of run $run_id (missing, expired, or a network error)" >&2
+  exit 4
 }
 
 branch=""
@@ -176,7 +183,9 @@ if [ "$conclusion" != "success" ]; then
   echo "FAILED_LOG_COMMAND=gh run view $run_id --log-failed"
 fi
 
-# A re-run keeps the run id and replaces the artifact, so the directory is per attempt.
+# A re-run keeps the run id and uploads another artifact with the same name next to the old one, and
+# `gh run download -n` picks the old one (seen on run 36095625881), so the newest artifact is downloaded by id
+# into a directory per attempt.
 # The artifact is downloaded into a staging directory and moved into place only after a complete download,
 # so an existing $dir always holds a complete artifact and a failed download is retried on the next call.
 dir="$out_root/e2e-$run_id-$run_attempt"
@@ -184,13 +193,16 @@ if [ -d "$dir" ]; then
   echo "$dir already has the artifact; skipping the download" >&2
 else
   partial_dir="$dir.partial"
-  rm -rf "$partial_dir"
+  rm -rf "$partial_dir" "$partial_dir.zip"
   mkdir -p "$partial_dir"
-  if ! gh run download "$run_id" -n "$artifact_name" -D "$partial_dir" >&2; then
-    rm -rf "$partial_dir"
-    echo "error: could not download the $artifact_name artifact of run $run_id (missing, expired, or a network error)" >&2
-    exit 4
-  fi
+  artifact_id="$(gh api "repos/{owner}/{repo}/actions/runs/$run_id/artifacts?per_page=100" |
+    jq -r --arg name "$artifact_name" \
+      '[.artifacts[] | select(.name == $name and (.expired | not))] | sort_by(.created_at) | last | .id // empty')" ||
+    fail_download
+  [ -n "$artifact_id" ] || fail_download
+  gh api "repos/{owner}/{repo}/actions/artifacts/$artifact_id/zip" >"$partial_dir.zip" || fail_download
+  unzip -q "$partial_dir.zip" -d "$partial_dir" >&2 || fail_download
+  rm -f "$partial_dir.zip"
   mv "$partial_dir" "$dir"
 fi
 
