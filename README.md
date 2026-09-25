@@ -14,6 +14,19 @@ Leave comments on any line of your working tree, hand them to Claude Code or Cod
 | `packages/mcp-server` | stdio MCP server (`fusen-mcp`) that lets AI agents read and post comments |
 | `e2e` | Playwright tests that launch VS Code with the extension and capture screenshots |
 
+## Quick setup
+
+From a clone of this repository, with `gh` signed in and Node.js 22 or later, each target downloads the latest release into `~/.fusen` (override with `FUSEN_DIR=<dir>`) and sets it up. Run it again to upgrade.
+
+```sh
+make cursor   # install the extension into Cursor
+make vscode   # install the extension into VS Code
+make claude   # register the MCP server with Claude Code for every project
+make codex    # register the MCP server with Codex CLI (it reads the project Codex is started in)
+```
+
+The sections below do the same by hand.
+
 ## Install the extension
 
 Fusen is distributed only as a VSIX file, not on the VS Code Marketplace or Open VSX. Download `fusen-<version>.vsix` from a GitHub release (https://github.com/bannzai/fusen/releases):
