@@ -116,6 +116,14 @@ test("parseThread keeps the code of the commented lines, which a thread may omit
   assert.equal("code" in parseThread({ ...sampleThread("thread-a"), code: undefined }), false);
 });
 
+test("parseThread keeps the git state of a comment, which comments written before it existed do not have", () => {
+  const thread = sampleThread("thread-a");
+  const gitState = { commit: "0123456789abcdef0123456789abcdef01234567", staged: false, unstaged: true, untracked: false };
+  const threadWithGit = { ...thread, comments: [{ ...thread.comments[0]!, git: gitState }, thread.comments[1]!] };
+  assert.deepEqual(parseThread(threadWithGit), threadWithGit);
+  assert.equal(parseThread(thread).comments.some((comment) => "git" in comment), false);
+});
+
 test("parseThread rejects values that are not a valid thread", () => {
   const thread = sampleThread("thread-a");
   const invalidValues: unknown[] = [
@@ -141,6 +149,8 @@ test("parseThread rejects values that are not a valid thread", () => {
     { ...thread, comments: [{ ...thread.comments[0], body: 1 }] },
     { ...thread, comments: [{ ...thread.comments[0], createdAt: "yesterday" }] },
     { ...thread, comments: [{ ...thread.comments[0], id: "a/b" }] },
+    { ...thread, comments: [{ ...thread.comments[0], git: { commit: "0123456", staged: false, unstaged: false, untracked: false } }] },
+    { ...thread, comments: [{ ...thread.comments[0], git: null }] },
   ];
   for (const value of invalidValues) {
     assert.throws(() => parseThread(value), Error, JSON.stringify(value));

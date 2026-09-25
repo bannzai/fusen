@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { FusenGitState } from "./git.js";
 import type { FusenThread } from "./threads.js";
 
 /** Returns the path of `.fusen/prompt.md`, the file the prompt of the workspace folder at `workspaceRoot` is exported to. */
@@ -18,6 +19,7 @@ export async function writePrompt(workspaceRoot: string, prompt: string): Promis
  * Returns one markdown prompt that hands `threads` of the workspace folder at `workspaceRoot` to an AI agent.
  * Threads are ordered by file and line, and each one carries its file path, line range,
  * the code of those lines as it is on disk now, and every comment in posting order.
+ * A comment with a git state has one line between its author and its body with the commit and the state of the file when it was posted.
  */
 export async function createPrompt(workspaceRoot: string, threads: readonly FusenThread[]): Promise<string> {
   const sortedThreads = [...threads].sort(
@@ -53,8 +55,23 @@ function threadSection(thread: FusenThread, lines: string[] | undefined): string
       : thread.startLine > lines.length
         ? `_The file has only ${countText(lines.length, "line")}._`
         : codeBlock(lines.slice(thread.startLine - 1, thread.endLine).join("\n"), path.posix.extname(thread.file).slice(1)),
-    ...thread.comments.map((comment) => `**${comment.author === "human" ? "Human" : "Agent"}:**\n\n${comment.body}`),
+    ...thread.comments.map((comment) =>
+      [`**${comment.author === "human" ? "Human" : "Agent"}:**`, ...(comment.git ? [gitStateLine(comment.git)] : []), comment.body].join(
+        "\n\n",
+      ),
+    ),
   ].join("\n\n");
+}
+
+/** Returns the line that tells an agent the commit and the state of the commented file when a comment was posted. */
+function gitStateLine(git: FusenGitState): string {
+  const changes = [...(git.staged ? ["staged"] : []), ...(git.unstaged ? ["unstaged"] : [])];
+  const fileStates = [...(git.untracked ? ["was untracked"] : []), ...(changes.length > 0 ? [`had ${changes.join(" and ")} changes`] : [])];
+  // Seven digits is the shortest abbreviation git itself prints for a commit (core.abbrev, https://git-scm.com/docs/git-config).
+  const commit = `commit \`${git.commit.slice(0, 7)}\``;
+  return `_Posted at ${git.branch === undefined ? `${commit} (detached HEAD)` : `${commit} on branch \`${git.branch}\``}, when the file ${
+    fileStates.length > 0 ? fileStates.join(" and ") : "had no uncommitted changes"
+  }._`;
 }
 
 /** Returns `code` in a fenced code block whose fence is longer than any backtick run inside the code. */
