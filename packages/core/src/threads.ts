@@ -10,6 +10,7 @@ import {
   readFusenDirectory,
   writeFusenFile,
 } from "./files.js";
+import { type FusenGitState, parseGitState } from "./git.js";
 
 /** Who wrote a comment: the person using the editor, or an AI agent writing over MCP. */
 export type FusenCommentAuthor = "human" | "agent";
@@ -24,6 +25,11 @@ export interface FusenComment {
   author: FusenCommentAuthor;
   /** When the comment was created, as an ISO 8601 string. */
   createdAt: string;
+  /**
+   * The git state of the commented file when the comment was posted.
+   * Omitted when the file was not in a git repository or git could not tell, and in comments written before it existed.
+   */
+  git?: FusenGitState;
 }
 
 /** A thread of comments on a line range of one file, stored as `.fusen/threads/<id>.json`. */
@@ -159,7 +165,13 @@ export function parseComment(value: unknown): FusenComment {
   if (typeof value.createdAt !== "string" || Number.isNaN(Date.parse(value.createdAt))) {
     throw new Error(`Comment ${value.id} has an invalid createdAt: ${JSON.stringify(value.createdAt)}`);
   }
-  return { id: value.id, body: value.body, author: value.author, createdAt: value.createdAt };
+  return {
+    id: value.id,
+    body: value.body,
+    author: value.author,
+    createdAt: value.createdAt,
+    ...(value.git === undefined ? {} : { git: parseGitState(value.git) }),
+  };
 }
 
 /** Returns whether `value` is a 1-based line number. */
