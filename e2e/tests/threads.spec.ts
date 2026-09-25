@@ -2,7 +2,7 @@ import { cpSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { readThreads } from "fusen-core";
+import { readThreads, writeThread } from "fusen-core";
 import { launchVSCode } from "../launch";
 
 const fixtureWorkspacePath = path.resolve(__dirname, "../fixtures/workspace");
@@ -63,5 +63,60 @@ test("a note added from the gutter is saved to .fusen/ and restored after a rest
     await window.screenshot({ path: testInfo.outputPath("thread-restored.png") });
   } finally {
     await secondApp.close();
+  }
+});
+
+test("replies, comment edits and deletions in a thread are saved to .fusen/", async ({}, testInfo) => {
+  const profilePath = mkdtempSync(path.join(tmpdir(), "fusen-e2e-"));
+  const workspacePath = path.join(profilePath, "workspace");
+  cpSync(fixtureWorkspacePath, workspacePath, { recursive: true });
+  await writeThread(workspacePath, {
+    version: 1,
+    id: "e2e-thread",
+    file: "sample.ts",
+    startLine: 2,
+    endLine: 2,
+    comments: [{ id: "first", body: "Use a template literal", author: "human", createdAt: new Date().toISOString() }],
+  });
+  const readComments = async () => (await readThreads(workspacePath)).threads[0]?.comments;
+
+  const app = await launchVSCode({ profilePath, workspacePath, filePath: path.join(workspacePath, "sample.ts") });
+  try {
+    const window = await app.firstWindow();
+    const reviewWidget = window.locator(".review-widget", { hasText: "Use a template literal" });
+    await expect(reviewWidget).toBeVisible({ timeout: 60_000 });
+
+    await reviewWidget.locator(".comment-form .monaco-editor").click();
+    await window.keyboard.type("Already done");
+    await reviewWidget.getByRole("button", { name: "Reply" }).click();
+    await expect
+      .poll(async () => (await readComments())?.map((comment) => comment.body))
+      .toEqual(["Use a template literal", "Already done"]);
+
+    const firstComment = reviewWidget.locator(".review-comment", { hasText: "Use a template literal" });
+    await firstComment.hover();
+    await firstComment.getByRole("button", { name: "Edit" }).click();
+    await firstComment.locator(".edit-container .monaco-editor").click();
+    await window.keyboard.press("ControlOrMeta+A");
+    await window.keyboard.type("Use a template literal here");
+    await firstComment.getByRole("button", { name: "Save" }).click();
+    await expect
+      .poll(async () => (await readComments())?.map((comment) => comment.body))
+      .toEqual(["Use a template literal here", "Already done"]);
+    await window.screenshot({ path: testInfo.outputPath("thread-replied-and-edited.png") });
+
+    const reply = reviewWidget.locator(".review-comment", { hasText: "Already done" });
+    await reply.hover();
+    await reply.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect
+      .poll(async () => (await readComments())?.map((comment) => comment.body))
+      .toEqual(["Use a template literal here"]);
+
+    await reviewWidget.getByRole("button", { name: "Delete Thread" }).click();
+    await expect.poll(async () => (await readThreads(workspacePath)).threads).toEqual([]);
+    await expect(window.locator(".review-widget")).toHaveCount(0);
+    await window.screenshot({ path: testInfo.outputPath("thread-deleted.png") });
+  } finally {
+    await app.close();
   }
 });
