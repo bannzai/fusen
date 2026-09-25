@@ -1,5 +1,6 @@
 node_modules/
 out/
+dist/
 *.vsix
 # Copied from the repository root by `npm run package` so that vsce puts them in the VSIX.
 packages/extension/LICENSE

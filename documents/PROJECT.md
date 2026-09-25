@@ -22,7 +22,7 @@ AI agents (Claude Code, Codex CLI) point at code as "file path + line number" in
 | Storage | Plain files under `.fusen/` in the workspace | Source files stay untouched. The extension and the MCP server read and write the same files and pick up each other's changes with file watching. |
 | AI access | MCP server as a separate stdio process (`packages/mcp-server`, `npx fusen-mcp`) | One line registers it in both Claude Code (`.mcp.json`) and Codex CLI, and it works without the editor running. |
 | Approval | AI-written comments go to `.fusen/_pending/`; the extension shows them as threads with approve / reject actions | Nothing an agent writes becomes a regular comment until a human accepts it. |
-| Distribution | The MCP server on npm (`fusen-mcp`) and the extension as a VSIX attached to GitHub Releases, both from `.github/workflows/release.yml` on a `v*` tag. Not published to the VS Code Marketplace or Open VSX. The VSIX bundles the extension and `fusen-core` into one file with esbuild | Decided in https://github.com/bannzai/fusen/issues/9. The VSIX ships no `node_modules` (the workspace packages are hoisted outside the extension directory), so the bundle is what makes `fusen-core` available at run time |
+| Distribution | The MCP server on npm (`fusen-mcp`) and the extension as a VSIX attached to GitHub Releases, both from `.github/workflows/release.yml` on a `v*` tag. Not published to the VS Code Marketplace or Open VSX. The VSIX bundles the extension and `fusen-core` into one file with esbuild, and so does `fusen-mcp` (`dist/index.js`, with `@modelcontextprotocol/sdk` and `zod` left as npm dependencies). `fusen-core` is not published to npm | Decided in https://github.com/bannzai/fusen/issues/9 and https://github.com/bannzai/fusen/issues/6. The VSIX ships no `node_modules` (the workspace packages are hoisted outside the extension directory), and `fusen-core` is a private workspace package that `npx fusen-mcp` could not install, so the bundle is what makes `fusen-core` available at run time. Publishing `fusen-core` as a second npm package was rejected: it adds a public package, its name and its token scope only to share code inside this repository. The `fusen-mcp` bundle is ESM while `fusen-core` builds to CommonJS, so the bundle defines `require` with `createRequire` for the `require` calls of `fusen-core` |
 | E2E | Playwright `_electron.launch` against a VS Code build downloaded by `@vscode/test-electron`, with `--extensionDevelopmentPath` | Same approach as the VS Code smoke tests. The test saves screenshots that an agent reads to judge the UI. |
 
 There is no database, backend, hosting, authentication, analytics or billing. Fusen collects no user data; everything stays in the workspace's `.fusen/` directory.
@@ -96,15 +96,18 @@ Rejected alternative: a content hash of the lines, as Code Context Notes uses. I
 
 ## MCP tools
 
-The server treats its working directory as the workspace folder, so an MCP client registration starts it in the project directory.
+The server reads and writes the `.fusen/` of one workspace folder: the `--workspace <path>` argument, else `CLAUDE_PROJECT_DIR`, else its working directory. Claude Code sets `CLAUDE_PROJECT_DIR` to the project root for the stdio servers it starts (https://code.claude.com/docs/en/mcp), so a Claude Code registration works without an argument; Codex CLI passes nothing like it, so its registration sets `cwd` or `--workspace`. A Fusen-specific environment variable was rejected because the argument already covers every client. The server reads `.fusen/` directly and does not need the extension to be running.
 
 | Tool | What it does |
 | --- | --- |
+| `list_comments` | Returns `{ threads, pendingProposals, invalidFiles }`: the threads in `.fusen/threads/` (status `open`) and the proposals in `.fusen/_pending/` (status `pending`), in the storage format, optionally only those on `file` or with `status`. A proposed reply is on the file of the thread it replies to. `invalidFiles` lists the files that failed validation, as the extension warns about them |
+| `get_file_comments` | The same result as `list_comments` for one `file` with both statuses |
+| `get_prompt` | Returns the markdown of `createPrompt` for every thread, or those on `file`, the same text as `Fusen: Copy comments as prompt`. Proposals are not included. Each skipped invalid file is reported in a separate text block after the prompt |
 | `post_comment` | Writes a proposed thread on `file` from `startLine` to `endLine` (1-based, `endLine` defaults to `startLine`). Fails when the path leaves the workspace folder, the file cannot be read, or a line is past the end of the file (counted as the editor counts, so the empty line after a final newline exists) |
 | `reply_to_thread` | Writes a proposed reply to `threadId`. Fails when `.fusen/threads/` has no such thread |
 | `get_proposal_status` | Returns `pending`, `approved` or `rejected` for a proposal id, derived from the files as described under `.fusen/_pending/<id>.json` |
 
-Every tool returns `{ proposalId, status }` as structured content and as JSON text.
+`post_comment`, `reply_to_thread` and `get_proposal_status` return `{ proposalId, status }`, and `list_comments` and `get_file_comments` their result, as structured content and as JSON text. The read tools declare no output schema, because it would repeat the storage format in a second place. A `file` that is not a path relative to the workspace folder with `/` separators is an error rather than an empty result, so that an agent passing an absolute path learns why nothing matched.
 
 ## Rejected options
 

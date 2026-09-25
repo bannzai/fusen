@@ -35,6 +35,16 @@ To build the VSIX yourself from a clone: `npm ci && npm run build && npm run pac
 
 From its first release, the server is on npm as `fusen-mcp` and runs with `npx -y fusen-mcp`. Until then, register it from a clone (see below).
 
+### Which workspace the server reads
+
+The server reads and writes the `.fusen/` directory of one workspace folder, chosen in this order:
+
+1. The `--workspace <path>` argument (a relative path is resolved against the working directory)
+2. The `CLAUDE_PROJECT_DIR` environment variable, which Claude Code sets to the project root for the MCP servers it starts
+3. The working directory the server was started in
+
+Claude Code therefore needs no extra setting. Codex CLI does not tell the server which project it works on, so give it the project with `cwd` or `--workspace` (see below).
+
 ### Claude Code
 
 ```sh
@@ -56,17 +66,28 @@ Add `--scope project` to share the registration with the repository instead; it 
 
 ### Codex CLI
 
-```sh
-codex mcp add fusen -- npx -y fusen-mcp
-```
-
-or add it to `~/.codex/config.toml`:
+Register it per project in `.codex/config.toml` at the project root (Codex CLI loads it for trusted projects), with `cwd` set to the project:
 
 ```toml
 [mcp_servers.fusen]
 command = "npx"
 args = ["-y", "fusen-mcp"]
+cwd = "/absolute/path/to/project"
 ```
+
+or pass the project as an argument, which also works in `~/.codex/config.toml` or with `codex mcp add`:
+
+```sh
+codex mcp add fusen -- npx -y fusen-mcp --workspace /absolute/path/to/project
+```
+
+```toml
+[mcp_servers.fusen]
+command = "npx"
+args = ["-y", "fusen-mcp", "--workspace", "/absolute/path/to/project"]
+```
+
+Without either, the server uses the directory Codex CLI started it in.
 
 ### From a clone (before the npm release)
 
@@ -77,11 +98,11 @@ git clone https://github.com/bannzai/fusen
 cd fusen
 npm ci
 npm run build
-claude mcp add fusen -- node "$PWD/packages/mcp-server/out/index.js"
-codex mcp add fusen -- node "$PWD/packages/mcp-server/out/index.js"
+claude mcp add fusen -- node "$PWD/packages/mcp-server/dist/index.js"
+codex mcp add fusen -- node "$PWD/packages/mcp-server/dist/index.js" --workspace /absolute/path/to/project
 ```
 
-In `.mcp.json` or `~/.codex/config.toml`, use `"command": "node"` / `command = "node"` with the absolute path of `packages/mcp-server/out/index.js` as the only argument.
+In `.mcp.json` or `.codex/config.toml`, use `"command": "node"` / `command = "node"` with the absolute path of `packages/mcp-server/dist/index.js` as the first argument, followed by `--workspace <path>` for Codex CLI.
 
 ## Development
 
