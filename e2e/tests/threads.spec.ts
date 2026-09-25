@@ -24,9 +24,10 @@ test("a note added from the gutter is saved to .fusen/ and restored after a rest
 
     // The gutter glyph column is shared by all lines, so click it at the height of the target line.
     const targetLine = window.locator(".view-line", { hasText: "return a + b;" });
-    const gutterGlyph = window.locator(".margin-view-overlays .comment-range-glyph").first();
+    // Glyphs of lines being re-rendered can be attached without a box, so wait for one that is laid out.
+    const gutterGlyph = window.locator(".margin-view-overlays .comment-range-glyph").filter({ visible: true }).first();
     await expect(targetLine).toBeVisible({ timeout: 30_000 });
-    await expect(gutterGlyph).toBeAttached({ timeout: 30_000 });
+    await expect(gutterGlyph).toBeVisible({ timeout: 30_000 });
     const targetLineBox = await targetLine.boundingBox();
     const gutterGlyphBox = await gutterGlyph.boundingBox();
     if (!targetLineBox || !gutterGlyphBox) {
@@ -105,6 +106,7 @@ test("replies, comment edits and deletions in a thread are saved to .fusen/", as
     await expect
       .poll(async () => (await readComments())?.map((comment) => comment.body))
       .toEqual(["Use a template literal here", "Already done"]);
+    await expect(reviewWidget.locator(".comment-body", { hasText: "Use a template literal here" })).toBeVisible();
     await window.screenshot({ path: testInfo.outputPath("thread-replied-and-edited.png") });
 
     const reply = reviewWidget.locator(".review-comment", { hasText: "Already done" });
