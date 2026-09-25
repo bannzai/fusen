@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
@@ -40,20 +38,17 @@ interface CommentsOutput {
   invalidFiles: InvalidFusenFile[];
 }
 
-/** The fields of the published package.json that the tests check. */
-interface PackageManifest {
-  /** Command names mapped to their scripts, relative to the package directory. */
-  bin: Record<string, string>;
-  /** Packages installed with fusen-mcp from npm. */
-  dependencies: Record<string, string>;
-  /** Packages used only to build and test fusen-mcp. */
-  devDependencies: Record<string, string>;
+/** The part of the esbuild metafile (https://esbuild.github.io/api/#metafile) that the tests check. */
+interface BundleMetafile {
+  /** Output files by path relative to the package directory, with the modules each one leaves to be loaded at run time. */
+  outputs: Record<string, { imports: { path: string; external?: boolean }[] }>;
 }
 
 const packageDirectoryPath = fileURLToPath(new URL("..", import.meta.url));
-const packageManifest = JSON.parse(await readFile(path.join(packageDirectoryPath, "package.json"), "utf8")) as PackageManifest;
-// The tests start the bundled script that `npx fusen-mcp` runs, not the tsc output next to this file.
-const binPath = path.join(packageDirectoryPath, packageManifest.bin["fusen-mcp"] ?? "");
+// The tests start a copy of the single-file server that GitHub releases ship, not the tsc output next to this file.
+// The copy sits in a new temporary directory, outside any node_modules, so a module left out of the bundle fails every test.
+const serverScriptPath = path.join(await mkdtemp(path.join(tmpdir(), "fusen-mcp-script-")), "fusen-mcp.js");
+await copyFile(path.join(packageDirectoryPath, "dist", "fusen-mcp.js"), serverScriptPath);
 
 /**
  * Starts the stdio server with `workspaceRoot` as its working directory, `args` after the script
@@ -67,7 +62,7 @@ async function connectClient(
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,
-      args: [binPath, ...args],
+      args: [serverScriptPath, ...args],
       cwd: workspaceRoot,
       // A given env replaces the default environment instead of extending it.
       env: env && { ...getDefaultEnvironment(), ...env },
@@ -344,36 +339,16 @@ test("the workspace folder is --workspace, then CLAUDE_PROJECT_DIR, then the wor
   assert.deepEqual(await readThreadIds({ args: ["--workspace", "nested"] }), ["in-nested"]);
 });
 
-test("the npm package holds the license, the README and only the bundled bin, which imports nothing but Node built-ins and its dependencies", async () => {
-  const { stdout } = await promisify(execFile)("npm", ["pack", "--dry-run", "--json"], { cwd: packageDirectoryPath });
-  const [packResult] = JSON.parse(stdout) as { files: { path: string }[] }[];
-  const packedFiles = (packResult?.files ?? []).map((file) => file.path);
-  for (const requiredFile of ["LICENSE", "README.md"]) {
-    assert.ok(packedFiles.includes(requiredFile), `${requiredFile} is not in the package: ${packedFiles.join(", ")}`);
-  }
+test("fusen-mcp.js is the whole server in one file, which loads nothing but Node built-ins", async () => {
+  const metafile = JSON.parse(await readFile(path.join(packageDirectoryPath, "dist", "metafile.json"), "utf8")) as BundleMetafile;
+  assert.deepEqual(Object.keys(metafile.outputs), ["dist/index.js"]);
   assert.deepEqual(
-    packedFiles.filter((filePath) => /\.(map|ts)$/.test(filePath)),
-    [],
-    "the package contains sources or source maps",
+    await readFile(serverScriptPath, "utf8"),
+    await readFile(path.join(packageDirectoryPath, "dist", "index.js"), "utf8"),
+    "fusen-mcp.js differs from the dist/index.js that a clone registers",
   );
-  const javaScriptFiles = packedFiles.filter((filePath) => /\.[cm]?js$/.test(filePath));
-  assert.deepEqual(javaScriptFiles, [packageManifest.bin["fusen-mcp"]]);
-  assert.ok(!("fusen-core" in packageManifest.dependencies) && "fusen-core" in packageManifest.devDependencies);
-
-  const allowedModules = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
-  const dependencyNames = Object.keys(packageManifest.dependencies);
-  for (const javaScriptFile of javaScriptFiles) {
-    const source = await readFile(path.join(packageDirectoryPath, javaScriptFile), "utf8");
-    const importedModules = [
-      ...source.matchAll(/\b(?:from\s*|import\s*|(?:require|import)\(\s*)["']([^"']+)["']/g),
-    ].map((match) => match[1] ?? "");
-    assert.ok(importedModules.includes("@modelcontextprotocol/sdk/server/stdio.js"), `${javaScriptFile} is not the server bundle`);
-    for (const importedModule of importedModules) {
-      assert.ok(
-        allowedModules.has(importedModule) ||
-          dependencyNames.some((name) => importedModule === name || importedModule.startsWith(`${name}/`)),
-        `${javaScriptFile} imports ${importedModule}, which is not installed with fusen-mcp`,
-      );
-    }
+  const builtinModuleNames = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
+  for (const { path: importedModule, external } of metafile.outputs["dist/index.js"]?.imports ?? []) {
+    assert.ok(external && builtinModuleNames.has(importedModule), `fusen-mcp.js loads ${importedModule} at run time`);
   }
 });
