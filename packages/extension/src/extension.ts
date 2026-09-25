@@ -1,17 +1,27 @@
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import {
   type FusenComment,
+  type FusenPendingProposal,
+  type FusenPendingReply,
   type FusenThread,
   type LineRange,
   codeAt,
   createFusenId,
   createPrompt,
+  deletePendingProposal,
   deleteThread,
+  isPendingReply,
+  isProposalInThreads,
   locateCode,
   moveLineRange,
+  pendingDirectoryPath,
+  pendingProposalFilePath,
   promptFilePath,
+  readPendingProposals,
   readThread,
   readThreads,
+  threadFilePath,
   writePrompt,
   writeThread,
 } from "fusen-core";
@@ -25,6 +35,12 @@ interface FusenEditorComment extends vscode.Comment {
   fusenCommentId: string;
 }
 
+/** A comment shown in the editor for an agent's pending proposal, which the approve and reject actions act on. */
+interface FusenProposalEditorComment extends vscode.Comment {
+  /** Path of the proposal's file in `.fusen/_pending/`, the key of `storedProposals`. */
+  fusenProposalFilePath: string;
+}
+
 /**
  * A thread as stored in `.fusen/`, with the workspace folder whose `.fusen/` holds it.
  * The folder is kept rather than looked up from the file, because with nested workspace folders
@@ -36,6 +52,22 @@ interface StoredThread {
   /** The stored thread, whose `file` is relative to `workspaceRoot`. */
   fusenThread: FusenThread;
 }
+
+/** A proposal as stored in `.fusen/_pending/`, with the workspace folder whose `.fusen/` holds it. */
+interface StoredProposal {
+  /** File system path of the workspace folder that stores the proposal. */
+  workspaceRoot: string;
+  /** The stored proposal. */
+  proposal: FusenPendingProposal;
+}
+
+// `contextValue` of a pending proposal's editor thread and of a pending reply's comment; the approve and reject
+// menus in package.json match it. The comments of a proposed thread use a separate value so that neither those
+// menus nor the edit and delete menus of stored comments apply to them.
+const proposalContextValue = "proposal";
+const proposedThreadCommentContextValue = "proposedThreadComment";
+// Shown in the header of a proposed thread and next to the author of a proposed reply, so they read as waiting for approval.
+const pendingLabel = "Pending approval";
 
 export function activate(context: vscode.ExtensionContext): void {
   // Visible marker that the extension host activated Fusen; the E2E test asserts on it.
@@ -60,6 +92,21 @@ export function activate(context: vscode.ExtensionContext): void {
   const storedThreads = new Map<vscode.CommentThread, StoredThread>();
   // The last change queued for each editor thread; see `changeThread`.
   const threadChanges = new WeakMap<vscode.CommentThread, Promise<void>>();
+  // The pending proposals of every workspace folder, keyed by the path of their file in `.fusen/_pending/`,
+  // as last read from disk. A proposed thread is shown as its own editor thread, and a proposed reply
+  // is shown at the end of the editor thread of the thread it replies to.
+  const storedProposals = new Map<string, StoredProposal>();
+  // The editor thread of each proposed thread, keyed like `storedProposals`.
+  const proposalThreads = new Map<string, vscode.CommentThread>();
+  // The file watcher of `.fusen/` of each loaded workspace folder, keyed by the folder's path.
+  const proposalWatchers = new Map<string, vscode.FileSystemWatcher>();
+  // The modification time of `.fusen/_pending/` last seen for each workspace folder, or `null` while it does not exist;
+  // see `reloadProposalsIfPendingDirectoryChanged`.
+  const pendingDirectoryModifiedTimes = new Map<string, number | null>();
+  // Problems already reported, so that re-reading `.fusen/_pending/` on every change does not repeat them.
+  const reportedProblems = new Set<string>();
+  // The last change queued to the proposals; see `changeProposals`.
+  let proposalChanges = Promise.resolve();
   // Threads whose code is not in their file any more. They are shown as "location unknown", are not moved by edits,
   // and keep the lines and code stored in `.fusen/`, so that they are placed again if the code comes back.
   const unlocatedThreads = new WeakSet<vscode.CommentThread>();
@@ -91,27 +138,71 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   /**
-   * Shows the comments of the stored thread in `commentThread`.
+   * Runs `change` after the changes already queued to the proposals, so that a re-read of `.fusen/_pending/`
+   * never interleaves with an approval or a rejection and shows a proposal that was just decided.
+   */
+  function changeProposals(change: () => Promise<void>): Promise<void> {
+    proposalChanges = proposalChanges.catch(() => undefined).then(change);
+    return proposalChanges;
+  }
+
+  /** Shows `message` as a warning unless it was already shown. */
+  function reportProblemOnce(message: string): void {
+    if (!reportedProblems.has(message)) {
+      reportedProblems.add(message);
+      void vscode.window.showWarningMessage(message);
+    }
+  }
+
+  /** Returns the pending replies to the stored thread `stored` whose comment is not in the thread yet. */
+  function pendingReplies(stored: StoredThread): [string, FusenPendingReply][] {
+    const storedCommentIds = new Set(stored.fusenThread.comments.map((fusenComment) => fusenComment.id));
+    return [...storedProposals].flatMap(([proposalFilePath, { workspaceRoot, proposal }]): [string, FusenPendingReply][] =>
+      workspaceRoot === stored.workspaceRoot &&
+      isPendingReply(proposal) &&
+      proposal.threadId === stored.fusenThread.id &&
+      // A just approved reply is already in the thread until `.fusen/_pending/` is read again.
+      !storedCommentIds.has(proposal.comment.id)
+        ? [[proposalFilePath, proposal]]
+        : [],
+    );
+  }
+
+  /**
+   * Shows the comments of the stored thread in `commentThread`, followed by the pending replies to it.
    * Comments keep their objects across renders, because VS Code keeps the widget of the same object,
    * including the unsaved text of a comment being edited, and recreates the widget of a new one.
    */
   function render(commentThread: vscode.CommentThread): void {
     commentThread.label = unlocatedThreads.has(commentThread) ? "Location unknown: the noted code is not in the file" : undefined;
     const renderedComments = new Map(
-      commentThread.comments.map((comment) => [(comment as FusenEditorComment).fusenCommentId, comment as FusenEditorComment]),
+      commentThread.comments.flatMap((comment) =>
+        "fusenCommentId" in comment ? [[(comment as FusenEditorComment).fusenCommentId, comment as FusenEditorComment] as const] : [],
+      ),
     );
-    commentThread.comments = storedThread(commentThread).fusenThread.comments.map((fusenComment) => {
-      const renderedComment = renderedComments.get(fusenComment.id);
-      if (renderedComment?.mode === vscode.CommentMode.Editing) {
-        return renderedComment;
-      }
-      return Object.assign(renderedComment ?? { commentThread, fusenCommentId: fusenComment.id }, {
-        body: new vscode.MarkdownString(fusenComment.body),
-        mode: vscode.CommentMode.Preview,
-        author: { name: fusenComment.author === "human" ? "Human" : "Agent" },
-        timestamp: new Date(fusenComment.createdAt),
-      });
-    });
+    const renderedReplies = new Map(
+      commentThread.comments.flatMap((comment) =>
+        "fusenProposalFilePath" in comment
+          ? [[(comment as FusenProposalEditorComment).fusenProposalFilePath, comment as FusenProposalEditorComment] as const]
+          : [],
+      ),
+    );
+    const stored = storedThread(commentThread);
+    commentThread.comments = [
+      ...stored.fusenThread.comments.map((fusenComment) => {
+        const renderedComment = renderedComments.get(fusenComment.id);
+        if (renderedComment?.mode === vscode.CommentMode.Editing) {
+          return renderedComment;
+        }
+        return Object.assign(renderedComment ?? { commentThread, fusenCommentId: fusenComment.id }, commentView(fusenComment));
+      }),
+      ...pendingReplies(stored).map(([proposalFilePath, reply]) =>
+        Object.assign(renderedReplies.get(proposalFilePath) ?? { fusenProposalFilePath: proposalFilePath }, commentView(reply.comment), {
+          label: pendingLabel,
+          contextValue: proposalContextValue,
+        }),
+      ),
+    ];
   }
 
   /** Writes the thread to `.fusen/` of its workspace folder and shows it in `commentThread`. */
@@ -121,14 +212,43 @@ export function activate(context: vscode.ExtensionContext): void {
     render(commentThread);
   }
 
-  /** Deletes the stored file of `commentThread`, if any, and removes the thread from the editor. */
+  /**
+   * Deletes the stored file of `commentThread`, if any, and removes the thread from the editor.
+   * Re-reading the proposals afterwards rejects the pending replies to the thread; see `reloadProposals`.
+   */
   async function remove(commentThread: vscode.CommentThread): Promise<void> {
     const stored = storedThreads.get(commentThread);
     if (stored) {
       await deleteThread(stored.workspaceRoot, stored.fusenThread.id);
+      // Not awaited: an approval holds the proposal queue while it waits for this thread's queue.
+      changeProposals(() => reloadProposals(stored.workspaceRoot)).catch(reportError("could not read proposals"));
     }
     storedThreads.delete(commentThread);
     commentThread.dispose();
+  }
+
+  /** Creates an expanded editor thread on the lines of `fusenThread` in the workspace folder at `workspaceRoot`. */
+  function createEditorThread(workspaceRoot: string, fusenThread: FusenThread): vscode.CommentThread {
+    const commentThread = commentController.createCommentThread(
+      vscode.Uri.joinPath(
+        // The folder's own URI makes the thread's URI equal to its document's, which `storedThreadsOn` compares as strings.
+        vscode.workspace.workspaceFolders?.find((workspaceFolder) => workspaceFolder.uri.fsPath === workspaceRoot)?.uri ??
+          vscode.Uri.file(workspaceRoot),
+        fusenThread.file,
+      ),
+      editorRange(fusenThread),
+      [],
+    );
+    commentThread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+    return commentThread;
+  }
+
+  /** Shows the stored thread `stored` in a new editor thread and returns it. */
+  function showStoredThread(stored: StoredThread): vscode.CommentThread {
+    const commentThread = createEditorThread(stored.workspaceRoot, stored.fusenThread);
+    storedThreads.set(commentThread, stored);
+    render(commentThread);
+    return commentThread;
   }
 
   /**
@@ -257,14 +377,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const fileUris = new Map<string, vscode.Uri>();
       for (const fusenThread of threads) {
-        const commentThread = commentController.createCommentThread(
-          vscode.Uri.joinPath(workspaceFolder.uri, fusenThread.file),
-          editorRange(fusenThread),
-          [],
-        );
-        commentThread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
-        storedThreads.set(commentThread, { workspaceRoot: workspaceFolder.uri.fsPath, fusenThread });
-        render(commentThread);
+        const commentThread = showStoredThread({ workspaceRoot: workspaceFolder.uri.fsPath, fusenThread });
         fileUris.set(commentThread.uri.toString(), commentThread.uri);
       }
       // The files may have changed while the workspace was closed, for example by a git checkout.
@@ -274,12 +387,164 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
-  /** Restores the threads of `workspaceFolders`, reporting a failure instead of rejecting. */
-  function restoreThreadsReportingErrors(workspaceFolders: readonly vscode.WorkspaceFolder[]): void {
-    restoreThreads(workspaceFolders).catch((error: unknown) => {
-      void vscode.window.showErrorMessage(`Fusen could not restore notes: ${error instanceof Error ? error.message : String(error)}`);
-    });
+  /** Removes the editor thread of the proposed thread in `proposalFilePath`, if it is shown. */
+  function removeProposalThread(proposalFilePath: string): void {
+    proposalThreads.get(proposalFilePath)?.dispose();
+    proposalThreads.delete(proposalFilePath);
   }
+
+  /**
+   * Makes the editor show the proposals in `.fusen/_pending/` of the workspace folder at `workspaceRoot` as they are on disk:
+   * proposed threads as editor threads with approve and reject actions, and proposed replies in the threads they reply to.
+   * Running it again without a change on disk changes nothing.
+   */
+  async function reloadProposals(workspaceRoot: string): Promise<void> {
+    const { proposals: proposalsInDirectory, invalidFiles } = await readPendingProposals(workspaceRoot);
+    for (const invalidFile of invalidFiles) {
+      reportProblemOnce(`Fusen skipped ${invalidFile.path}: ${invalidFile.message}`);
+    }
+    // A proposal already in a thread is left over from an approval that stopped between saving the thread and deleting
+    // the proposal, and a reply to a thread that no longer exists has no thread to show its approve and reject actions in.
+    // Both are settled here, as approved and as rejected; otherwise they would stay pending with no action left to decide them.
+    // A thread file that exists but cannot be read is not a deleted thread, so replies to it are kept.
+    const { threads, invalidFiles: invalidThreadFiles } = await readThreads(workspaceRoot);
+    const invalidThreadFilePaths = new Set(invalidThreadFiles.map((invalidFile) => invalidFile.path));
+    const proposals: FusenPendingProposal[] = [];
+    for (const proposal of proposalsInDirectory) {
+      if (
+        !isProposalInThreads(threads, proposal.id) &&
+        !(
+          isPendingReply(proposal) &&
+          !threads.some((thread) => thread.id === proposal.threadId) &&
+          !invalidThreadFilePaths.has(threadFilePath(workspaceRoot, proposal.threadId))
+        )
+      ) {
+        proposals.push(proposal);
+        continue;
+      }
+      await deletePendingProposal(workspaceRoot, proposal.id);
+      const approvedThread = threads.find((thread) => thread.id === proposal.id);
+      if (
+        approvedThread &&
+        ![...storedThreads.values()].some((stored) => stored.workspaceRoot === workspaceRoot && stored.fusenThread.id === approvedThread.id)
+      ) {
+        relocateThreadsOnReportingErrors(showStoredThread({ workspaceRoot, fusenThread: approvedThread }).uri);
+      }
+    }
+    const proposalsOnDisk = new Map(proposals.map((proposal) => [pendingProposalFilePath(workspaceRoot, proposal.id), proposal]));
+    for (const [proposalFilePath, stored] of storedProposals) {
+      if (stored.workspaceRoot === workspaceRoot && !proposalsOnDisk.has(proposalFilePath)) {
+        storedProposals.delete(proposalFilePath);
+        removeProposalThread(proposalFilePath);
+      }
+    }
+    for (const [proposalFilePath, proposal] of proposalsOnDisk) {
+      if (JSON.stringify(storedProposals.get(proposalFilePath)?.proposal) === JSON.stringify(proposal)) {
+        continue;
+      }
+      storedProposals.set(proposalFilePath, { workspaceRoot, proposal });
+      removeProposalThread(proposalFilePath);
+      if (!isPendingReply(proposal)) {
+        const commentThread = createEditorThread(workspaceRoot, proposal);
+        commentThread.label = pendingLabel;
+        commentThread.contextValue = proposalContextValue;
+        commentThread.canReply = false;
+        commentThread.comments = proposal.comments.map((fusenComment): FusenProposalEditorComment => ({
+          fusenProposalFilePath: proposalFilePath,
+          ...commentView(fusenComment),
+          contextValue: proposedThreadCommentContextValue,
+        }));
+        proposalThreads.set(proposalFilePath, commentThread);
+      }
+    }
+    const storedThreadsOfFolder = [...storedThreads].filter(([, stored]) => stored.workspaceRoot === workspaceRoot);
+    for (const [commentThread] of storedThreadsOfFolder) {
+      render(commentThread);
+    }
+    for (const proposal of proposals) {
+      if (!isPendingReply(proposal) || storedThreadsOfFolder.some(([, stored]) => stored.fusenThread.id === proposal.threadId)) {
+        continue;
+      }
+      // A thread written after the workspace was restored, for example by a git checkout, is shown so that the reply to it can be decided.
+      const repliedThread = threads.find((thread) => thread.id === proposal.threadId);
+      if (!repliedThread) {
+        reportProblemOnce(`Fusen cannot show the reply ${proposal.id} because the thread ${proposal.threadId} cannot be read`);
+      } else if (![...storedThreads.values()].some((stored) => stored.workspaceRoot === workspaceRoot && stored.fusenThread.id === repliedThread.id)) {
+        relocateThreadsOnReportingErrors(showStoredThread({ workspaceRoot, fusenThread: repliedThread }).uri);
+      }
+    }
+  }
+
+  /** Returns the path of the proposal file that the approve or reject action on `target` acts on. */
+  function proposalFilePathOf(target: vscode.CommentThread | FusenProposalEditorComment): string {
+    if ("fusenProposalFilePath" in target) {
+      return target.fusenProposalFilePath;
+    }
+    const proposalFilePath = [...proposalThreads].find(([, commentThread]) => commentThread === target)?.[0];
+    if (!proposalFilePath) {
+      throw new Error("This thread is not a pending proposal");
+    }
+    return proposalFilePath;
+  }
+
+  /** Returns the pending proposal that the approve or reject action on `target` acts on. */
+  function storedProposal(target: vscode.CommentThread | FusenProposalEditorComment): StoredProposal {
+    const stored = storedProposals.get(proposalFilePathOf(target));
+    if (!stored) {
+      throw new Error("This proposal is no longer pending");
+    }
+    return stored;
+  }
+
+  /**
+   * Re-reads `.fusen/_pending/` of the workspace folder at `workspaceRoot` when the directory's modification time
+   * differs from the last one seen. Creating, renaming into place or deleting a proposal file changes it.
+   */
+  async function reloadProposalsIfPendingDirectoryChanged(workspaceRoot: string): Promise<void> {
+    const modifiedTime = await stat(pendingDirectoryPath(workspaceRoot)).then(
+      (stats) => stats.mtimeMs,
+      // A directory that cannot be read has no proposals to show, the same as one that does not exist.
+      () => null,
+    );
+    if (pendingDirectoryModifiedTimes.get(workspaceRoot) === modifiedTime) {
+      return;
+    }
+    pendingDirectoryModifiedTimes.set(workspaceRoot, modifiedTime);
+    await changeProposals(() => reloadProposals(workspaceRoot));
+  }
+
+  /** Watches `.fusen/` of `workspaceFolders` and shows the proposals already in `.fusen/_pending/`, after their threads. */
+  function loadWorkspaceFolders(workspaceFolders: readonly vscode.WorkspaceFolder[]): void {
+    for (const workspaceFolder of workspaceFolders) {
+      const workspaceRoot = workspaceFolder.uri.fsPath;
+      // The whole `.fusen/` is watched, because the events of files written into a directory created in the same instant,
+      // as the first proposal creates `.fusen/_pending/`, can be missed while the creation of the directories is reported.
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(workspaceFolder, ".fusen/**"));
+      const reload = () => {
+        changeProposals(() => reloadProposals(workspaceRoot)).catch(reportError("could not read proposals"));
+      };
+      watcher.onDidCreate(reload);
+      watcher.onDidChange(reload);
+      watcher.onDidDelete(reload);
+      proposalWatchers.set(workspaceRoot, watcher);
+    }
+    // Proposed replies are shown in their threads, so the threads are restored first.
+    changeProposals(async () => {
+      await restoreThreads(workspaceFolders);
+      for (const workspaceFolder of workspaceFolders) {
+        await reloadProposals(workspaceFolder.uri.fsPath);
+      }
+    }).catch(reportError("could not restore notes"));
+  }
+
+  // VS Code's file watcher can miss changes, for example ones made shortly after startup, so the modification time
+  // of `.fusen/_pending/` is also checked on an interval. Two seconds keeps a missed proposal from waiting long
+  // enough for a person to notice, for the cost of one stat call per workspace folder.
+  const pendingDirectoryCheck = setInterval(() => {
+    for (const workspaceRoot of proposalWatchers.keys()) {
+      reloadProposalsIfPendingDirectoryChanged(workspaceRoot).catch(reportError("could not read proposals"));
+    }
+  }, 2_000);
 
   // Changes outside the editor, such as a git checkout or an agent rewriting a file, reach files that are not open only through the file system.
   const fileSystemWatcher = vscode.workspace.createFileSystemWatcher("**/*");
@@ -287,8 +552,10 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     statusBarItem,
     commentController,
+    { dispose: () => proposalWatchers.forEach((watcher) => watcher.dispose()) },
+    { dispose: () => clearInterval(pendingDirectoryCheck) },
     vscode.workspace.onDidChangeWorkspaceFolders(({ added, removed }) => {
-      // A thread whose folder left the workspace has no `.fusen/` to save to any more.
+      // A thread or proposal whose folder left the workspace has no `.fusen/` to save to any more.
       const removedWorkspaceRoots = new Set(removed.map((workspaceFolder) => workspaceFolder.uri.fsPath));
       for (const [commentThread, stored] of storedThreads) {
         if (removedWorkspaceRoots.has(stored.workspaceRoot)) {
@@ -296,7 +563,18 @@ export function activate(context: vscode.ExtensionContext): void {
           commentThread.dispose();
         }
       }
-      restoreThreadsReportingErrors(added);
+      for (const [proposalFilePath, stored] of storedProposals) {
+        if (removedWorkspaceRoots.has(stored.workspaceRoot)) {
+          storedProposals.delete(proposalFilePath);
+          removeProposalThread(proposalFilePath);
+        }
+      }
+      for (const workspaceRoot of removedWorkspaceRoots) {
+        proposalWatchers.get(workspaceRoot)?.dispose();
+        proposalWatchers.delete(workspaceRoot);
+        pendingDirectoryModifiedTimes.delete(workspaceRoot);
+      }
+      loadWorkspaceFolders(added);
     }),
     vscode.workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
       // An event without content changes only reports that the document became dirty or clean.
@@ -460,6 +738,44 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("fusen.deleteThread", (commentThread: vscode.CommentThread) =>
       changeThread(commentThread, () => remove(commentThread)),
     ),
+    vscode.commands.registerCommand("fusen.approveProposal", (target: vscode.CommentThread | FusenProposalEditorComment) =>
+      changeProposals(async () => {
+        const { workspaceRoot, proposal } = storedProposal(target);
+        if (isPendingReply(proposal)) {
+          const repliedThread = [...storedThreads].find(
+            ([, stored]) => stored.workspaceRoot === workspaceRoot && stored.fusenThread.id === proposal.threadId,
+          )?.[0];
+          if (!repliedThread) {
+            throw new Error(`The thread ${proposal.threadId} of this reply does not exist`);
+          }
+          await changeThread(repliedThread, async () => {
+            // Read from disk, because the thread file may have changed outside the editor since the thread was shown.
+            const fusenThread = await readThread(workspaceRoot, proposal.threadId);
+            if (!fusenThread) {
+              throw new Error(`The thread ${proposal.threadId} of this reply does not exist`);
+            }
+            await save(repliedThread, { workspaceRoot, fusenThread: { ...fusenThread, comments: [...fusenThread.comments, proposal.comment] } });
+          });
+          await deletePendingProposal(workspaceRoot, proposal.id);
+          await reloadProposals(workspaceRoot);
+        } else {
+          await writeThread(workspaceRoot, proposal);
+          await deletePendingProposal(workspaceRoot, proposal.id);
+          // The proposal's editor thread goes away before the approved thread appears, so the two are never shown together.
+          await reloadProposals(workspaceRoot);
+          // Placing it on its `code` follows lines that moved while the proposal waited; one without `code` takes the code at its lines.
+          relocateThreadsOnReportingErrors(showStoredThread({ workspaceRoot, fusenThread: proposal }).uri);
+        }
+      }),
+    ),
+    vscode.commands.registerCommand("fusen.rejectProposal", (target: vscode.CommentThread | FusenProposalEditorComment) =>
+      changeProposals(async () => {
+        // Rejecting keeps no record; see "Storage format" in documents/PROJECT.md.
+        const { workspaceRoot, proposal } = storedProposal(target);
+        await deletePendingProposal(workspaceRoot, proposal.id);
+        await reloadProposals(workspaceRoot);
+      }),
+    ),
     vscode.commands.registerCommand("fusen.copyPrompt", async () => {
       const picked = await pickPromptThreads();
       if (!picked) {
@@ -480,7 +796,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  restoreThreadsReportingErrors(vscode.workspace.workspaceFolders ?? []);
+  loadWorkspaceFolders(vscode.workspace.workspaceFolders ?? []);
 }
 
 export function deactivate(): void {}
@@ -569,4 +885,21 @@ function relativeFilePath(workspaceFolder: vscode.WorkspaceFolder, fileUri: vsco
 /** Returns a new comment written by the person using the editor. */
 function humanComment(body: string): FusenComment {
   return { id: createFusenId(), body, author: "human", createdAt: new Date().toISOString() };
+}
+
+/** Returns how `fusenComment` is shown in the editor when it is not being edited. */
+function commentView(fusenComment: FusenComment): Pick<vscode.Comment, "body" | "mode" | "author" | "timestamp"> {
+  return {
+    body: new vscode.MarkdownString(fusenComment.body),
+    mode: vscode.CommentMode.Preview,
+    author: { name: fusenComment.author === "human" ? "Human" : "Agent" },
+    timestamp: new Date(fusenComment.createdAt),
+  };
+}
+
+/** Returns a handler that shows a failure of Fusen's background work with `summary`, instead of leaving it unhandled. */
+function reportError(summary: string): (error: unknown) => void {
+  return (error) => {
+    void vscode.window.showErrorMessage(`Fusen ${summary}: ${error instanceof Error ? error.message : String(error)}`);
+  };
 }

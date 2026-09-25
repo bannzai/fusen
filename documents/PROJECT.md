@@ -59,7 +59,7 @@ One file per thread. `<id>` is the thread's `id` and contains only `A-Z a-z 0-9 
 | `version` | Format version, raised only for a change that older readers cannot handle |
 | `file` | Path relative to the workspace folder with `/` separators. Absolute paths and `..` segments are rejected |
 | `startLine`, `endLine` | 1-based inclusive line range, the numbering people and agents use when they talk about code. It refers to the file as saved on disk |
-| `code` | Text of each line from `startLine` to `endLine` when the thread was last placed, used to find the lines again (see "Following code changes"). Optional: a thread written without it, by an agent or on unsaved changes in the editor, takes the text at its lines the next time the extension places it or the document is saved |
+| `code` | Text of each line from `startLine` to `endLine` when the thread was last placed, used to find the lines again (see "Following code changes"). Optional: a thread written without it, on unsaved changes in the editor or by other tools, takes the text at its lines the next time the extension places it or the document is saved |
 | `comments` | In posting order, never empty: deleting the last comment deletes the file |
 | `comments[].body` | Markdown |
 | `comments[].author` | `human` (written in the editor) or `agent` (written over MCP) |
@@ -69,12 +69,14 @@ Files are written to a temporary file in the same directory and renamed into pla
 
 ### `.fusen/_pending/<id>.json`
 
-Comments an agent writes over MCP wait here until a human approves or rejects them in the editor (implemented in a later issue). One file per proposal, with the same `version` and id rules as threads:
+Comments an agent writes over MCP wait here until a human approves or rejects them in the editor. The MCP server writes only to this directory and never changes `.fusen/threads/`. One file per proposal, with the same `version` and id rules as threads:
 
-- A new thread: the same shape as a thread file, with every comment's `author` set to `agent`. Approving moves it to `.fusen/threads/<id>.json`.
-- A reply to an existing thread: `{ "version": 1, "id": "<proposal id>", "threadId": "<thread id>", "comment": { ... } }`, where `comment` has the fields of `comments[]`. Approving appends the comment to that thread.
+- A new thread: the same shape as a thread file, with every comment's `author` set to `agent`. `post_comment` stores the `code` of the lines as they were when the agent posted, so the approved thread is placed on that code even if the file changed while the proposal waited. Approving moves it to `.fusen/threads/<id>.json`, so the proposal id becomes the thread id.
+- A reply to an existing thread: `{ "version": 1, "id": "<proposal id>", "threadId": "<thread id>", "comment": { ... } }`, where `comment` has the fields of `comments[]`, `author` is `agent` and `id` equals the proposal id. Approving appends the comment to that thread.
 
-Rejecting deletes the proposal file.
+Rejecting deletes the proposal file and keeps no record. The approval status an agent reads is derived from the files instead: approved when a thread has the proposal id as its thread id or as a comment id, otherwise pending while `.fusen/_pending/<id>.json` exists, and rejected otherwise. Approval writes the thread before it deletes the proposal, so a proposal already in a thread counts as approved, and the extension deletes such a leftover proposal file the next time it reads the directory. A pending reply whose thread file no longer exists (not one that merely fails validation) is deleted, that is rejected, at the same point, since its approve and reject actions would be shown in that thread; deleting a thread in the editor re-reads the directory right away. The cost is that a proposal whose approved thread or comment was deleted later also reads as rejected; a rejection log would tell the two apart, but it would be one more directory that grows forever for a distinction an agent does not act on differently.
+
+The extension watches `.fusen/` in every workspace folder and re-reads `.fusen/_pending/` on each change, so a proposal appears, changes or disappears in the editor as soon as the MCP server or anything else writes it. VS Code's file watcher can miss changes (in CI, proposals written right after startup into a new `.fusen/_pending/` never produced an event, and the Explorer did not show `.fusen` either), so the extension also compares the modification time of `.fusen/_pending/` every two seconds and re-reads it when the time changed. Proposals are written by renaming a file into the directory and removed by deleting it, and both change that time. A proposed thread is shown as its own thread labelled "Pending approval" with approve and reject actions in its header; a proposed reply is shown at the end of the thread it replies to, labelled the same, with the actions on the comment. A replied thread written after the workspace was opened, for example by a git checkout, is shown when a reply to it is read.
 
 ### `.fusen/prompt.md`
 
@@ -91,6 +93,18 @@ A thread stays on the code it was written on while the file changes. `packages/c
 - **Location unknown**: when the code is no longer in the file (the commented lines were changed or deleted outside the editor, or the file was deleted), the thread is shown at its stored lines with the label "Location unknown". Its stored lines and `code` are kept unchanged, so it is placed again if the code comes back (for example after checking out the previous branch, or by undoing the deletion in the editor). Edits do not move it until then.
 
 Rejected alternative: a content hash of the lines, as Code Context Notes uses. It supports only an exact match, and agents cannot read it; the stored text also lets the whitespace-insensitive comparison work.
+
+## MCP tools
+
+The server treats its working directory as the workspace folder, so an MCP client registration starts it in the project directory.
+
+| Tool | What it does |
+| --- | --- |
+| `post_comment` | Writes a proposed thread on `file` from `startLine` to `endLine` (1-based, `endLine` defaults to `startLine`). Fails when the path leaves the workspace folder, the file cannot be read, or a line is past the end of the file (counted as the editor counts, so the empty line after a final newline exists) |
+| `reply_to_thread` | Writes a proposed reply to `threadId`. Fails when `.fusen/threads/` has no such thread |
+| `get_proposal_status` | Returns `pending`, `approved` or `rejected` for a proposal id, derived from the files as described under `.fusen/_pending/<id>.json` |
+
+Every tool returns `{ proposalId, status }` as structured content and as JSON text.
 
 ## Rejected options
 
