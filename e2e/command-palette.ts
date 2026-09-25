@@ -9,8 +9,9 @@ export async function runCommand(window: Page, commandTitle: string): Promise<vo
   const quickInput = window.locator(".quick-input-widget");
   await window.keyboard.press("F1");
   await expect(quickInput).toBeVisible();
-  // F1 opens the palette with the ">" command prefix already typed.
-  await quickInput.locator("input").fill(`>${commandTitle}`);
+  // F1 opens the palette with the ">" command prefix already typed. Cursor adds checkbox inputs to the palette,
+  // so the text box is picked by its class.
+  await quickInput.locator("input.input").fill(`>${commandTitle}`);
   await expect(quickInput.getByRole("option", { name: commandTitle, exact: false }).first()).toBeVisible();
   await window.keyboard.press("Enter");
 }

@@ -14,8 +14,9 @@ async function runPromptCommand(window: Page, commandTitle: string, scopeLabel: 
   const quickInput = window.locator(".quick-input-widget");
   await window.keyboard.press("F1");
   await expect(quickInput).toBeVisible();
-  // F1 opens the palette with the ">" command prefix already typed.
-  await quickInput.locator("input").fill(`>${commandTitle}`);
+  // F1 opens the palette with the ">" command prefix already typed. Cursor adds checkbox inputs to the palette,
+  // so the text box is picked by its class.
+  await quickInput.locator("input.input").fill(`>${commandTitle}`);
   await expect(quickInput.getByRole("option", { name: commandTitle }).first()).toBeVisible();
   await window.keyboard.press("Enter");
   await quickInput.getByRole("option", { name: scopeLabel }).click();

@@ -1,6 +1,6 @@
 # Writing E2E tests for Fusen
 
-The tests launch a real VS Code (stable, downloaded by `@vscode/test-electron`) with Playwright's `_electron.launch`, load Fusen from `packages/extension` as a development extension, and open a workspace. The workbench is ordinary DOM, so Playwright locators work on it.
+The tests launch a real VS Code (stable, downloaded by `@vscode/test-electron`) with Playwright's `_electron.launch`, load Fusen from `packages/extension` as a development extension, and open a workspace. The workbench is ordinary DOM, so Playwright locators work on it. CI runs the same tests in Cursor, whose executable is passed as `FUSEN_E2E_EXECUTABLE_PATH`, so a test must not depend on anything only VS Code shows.
 
 ## Helpers
 

@@ -34,6 +34,9 @@ export async function launchVSCode({
       "--disable-workspace-trust",
       "--skip-welcome",
       "--skip-release-notes",
+      // Cursor's flag for skipping its log-in onboarding, which otherwise covers the workbench and takes every click.
+      // VS Code warns about the unknown flag and ignores it.
+      "--skip-onboarding",
       `--extensionDevelopmentPath=${extensionPath}`,
       `--extensions-dir=${path.join(profilePath, "extensions")}`,
       `--user-data-dir=${path.join(profilePath, "user-data")}`,
