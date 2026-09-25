@@ -84,6 +84,18 @@ test("proposals an agent puts in .fusen/_pending/ are shown for approval, and ap
     ]);
     await expect(proposedReply).not.toContainText("Pending approval");
     await window.screenshot({ path: testInfo.outputPath("proposal-reply-approved.png") });
+
+    // Deleting a thread rejects the proposed replies to it, whose approve and reject actions were in the thread.
+    await writePendingProposal(workspacePath, {
+      version: 1,
+      id: "orphaned-reply-proposal",
+      threadId: "approved-proposal",
+      comment: agentComment("orphaned-reply-proposal", "One more thing"),
+    });
+    await expect(approvedWidget.locator(".review-comment", { hasText: "One more thing" })).toBeVisible({ timeout: 30_000 });
+    await approvedWidget.getByRole("button", { name: "Delete Thread" }).click();
+    await expect.poll(readProposalIds).toEqual([]);
+    expect((await readThreads(workspacePath)).threads).toEqual([]);
   } finally {
     await app.close();
   }

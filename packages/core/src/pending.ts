@@ -102,17 +102,23 @@ export async function deletePendingProposal(workspaceRoot: string, proposalId: s
 }
 
 /**
- * Returns where the proposal `proposalId` stands.
+ * Returns whether the proposal `proposalId` is already in `threads`.
  * An approved new thread keeps the proposal id as its thread id, and an approved reply keeps it as its comment id.
  */
+export function isProposalInThreads(threads: readonly FusenThread[], proposalId: string): boolean {
+  return threads.some((thread) => thread.id === proposalId || thread.comments.some((comment) => comment.id === proposalId));
+}
+
+/**
+ * Returns where the proposal `proposalId` stands.
+ * A proposal that is in a thread reads as approved even while its file is still in `.fusen/_pending/`,
+ * because an approval that stopped between writing the thread and deleting the proposal has already taken effect.
+ */
 export async function readProposalStatus(workspaceRoot: string, proposalId: string): Promise<FusenProposalStatus> {
-  if (await fileExists(pendingProposalFilePath(workspaceRoot, proposalId))) {
-    return "pending";
+  // Resolving the path first rejects an id that could escape the directory before anything is read.
+  const proposalFilePath = pendingProposalFilePath(workspaceRoot, proposalId);
+  if (isProposalInThreads((await readThreads(workspaceRoot)).threads, proposalId)) {
+    return "approved";
   }
-  const { threads } = await readThreads(workspaceRoot);
-  return threads.some(
-    (thread) => thread.id === proposalId || thread.comments.some((comment) => comment.id === proposalId),
-  )
-    ? "approved"
-    : "rejected";
+  return (await fileExists(proposalFilePath)) ? "pending" : "rejected";
 }

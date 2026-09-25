@@ -101,6 +101,8 @@ test("readProposalStatus reads pending, approved and rejected proposals", async 
 
   // Approving moves a new thread into .fusen/threads/ and appends a reply to its thread, as the extension does.
   await writeThread(workspaceRoot, { ...approvedThread, comments: [...approvedThread.comments, approvedReply.comment] });
+  // An approval that stopped before deleting the proposal file has already taken effect.
+  assert.equal(await readProposalStatus(workspaceRoot, approvedReply.id), "approved");
   await deletePendingProposal(workspaceRoot, approvedThread.id);
   await deletePendingProposal(workspaceRoot, approvedReply.id);
   // Rejecting deletes the proposal.

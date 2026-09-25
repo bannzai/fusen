@@ -10,6 +10,7 @@ import {
   deletePendingProposal,
   deleteThread,
   isPendingReply,
+  isProposalInThreads,
   pendingDirectoryPath,
   pendingProposalFilePath,
   promptFilePath,
@@ -197,11 +198,19 @@ export function activate(context: vscode.ExtensionContext): void {
     render(commentThread);
   }
 
-  /** Deletes the stored file of `commentThread`, if any, and removes the thread from the editor. */
+  /**
+   * Deletes the stored file of `commentThread`, if any, and removes the thread from the editor.
+   * Pending replies to the thread are rejected with it, because their approve and reject actions live in the thread.
+   */
   async function remove(commentThread: vscode.CommentThread): Promise<void> {
     const stored = storedThreads.get(commentThread);
     if (stored) {
       await deleteThread(stored.workspaceRoot, stored.fusenThread.id);
+      for (const [, reply] of pendingReplies(stored)) {
+        await deletePendingProposal(stored.workspaceRoot, reply.id);
+      }
+      // Not awaited: an approval holds the proposal queue while it waits for this thread's queue.
+      changeProposals(() => reloadProposals(stored.workspaceRoot)).catch(reportError("could not read proposals"));
     }
     storedThreads.delete(commentThread);
     commentThread.dispose();
@@ -250,9 +259,27 @@ export function activate(context: vscode.ExtensionContext): void {
    * Running it again without a change on disk changes nothing.
    */
   async function reloadProposals(workspaceRoot: string): Promise<void> {
-    const { proposals, invalidFiles } = await readPendingProposals(workspaceRoot);
+    const { proposals: proposalsInDirectory, invalidFiles } = await readPendingProposals(workspaceRoot);
     for (const invalidFile of invalidFiles) {
       reportProblemOnce(`Fusen skipped ${invalidFile.path}: ${invalidFile.message}`);
+    }
+    // An approval that stopped between saving the thread and deleting the proposal is finished here;
+    // otherwise the proposal would stay in `.fusen/_pending/` with no action left to decide it.
+    const { threads } = await readThreads(workspaceRoot);
+    const proposals: FusenPendingProposal[] = [];
+    for (const proposal of proposalsInDirectory) {
+      if (!isProposalInThreads(threads, proposal.id)) {
+        proposals.push(proposal);
+        continue;
+      }
+      await deletePendingProposal(workspaceRoot, proposal.id);
+      const approvedThread = threads.find((thread) => thread.id === proposal.id);
+      if (
+        approvedThread &&
+        ![...storedThreads.values()].some((stored) => stored.workspaceRoot === workspaceRoot && stored.fusenThread.id === approvedThread.id)
+      ) {
+        showStoredThread({ workspaceRoot, fusenThread: approvedThread });
+      }
     }
     const proposalsOnDisk = new Map(proposals.map((proposal) => [pendingProposalFilePath(workspaceRoot, proposal.id), proposal]));
     for (const [proposalFilePath, stored] of storedProposals) {
