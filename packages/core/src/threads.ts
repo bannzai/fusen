@@ -135,6 +135,24 @@ export async function readThreads(
   return { threads, invalidFiles };
 }
 
+/** Reads the thread `threadId` of the workspace folder at `workspaceRoot`, or returns `undefined` when it has no file. Throws for a file that is not a valid thread. */
+export async function readThread(workspaceRoot: string, threadId: string): Promise<FusenThread | undefined> {
+  const text = await readFile(threadFilePath(workspaceRoot, threadId), "utf8").catch((error: unknown) => {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  });
+  if (text === undefined) {
+    return undefined;
+  }
+  const thread = parseThread(JSON.parse(text));
+  if (thread.id !== threadId) {
+    throw new Error(`Thread id ${thread.id} does not match the file name`);
+  }
+  return thread;
+}
+
 /**
  * Writes `thread` to its file, replacing any previous content.
  * The content goes to a temporary file first and is renamed into place,

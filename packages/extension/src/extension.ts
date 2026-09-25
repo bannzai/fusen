@@ -10,6 +10,7 @@ import {
   locateCode,
   moveLineRange,
   promptFilePath,
+  readThread,
   readThreads,
   writePrompt,
   writeThread,
@@ -133,23 +134,28 @@ export function activate(context: vscode.ExtensionContext): void {
   /**
    * Writes `lineRange` of `fileText`, the text of the file on disk, and the code on those lines to `.fusen/` if they changed.
    * The range shown in the editor is left as it is, because edits made after `fileText` was read have already moved it.
+   * Only the location is written over the thread file as it is now, because the file may have changed outside the editor,
+   * for example by a git checkout that also moved the code; a thread file that is gone is not written again.
    */
   async function writeLocation(commentThread: vscode.CommentThread, lineRange: LineRange, fileText: string): Promise<void> {
     const stored = storedThreads.get(commentThread);
-    // The thread was deleted while this change waited in the queue.
-    if (!stored) {
+    const code = codeAt(fileText, lineRange);
+    // The thread was deleted while this change waited in the queue, or the lines are not in the file.
+    if (!stored || !code) {
       return;
     }
-    const code = codeAt(fileText, lineRange);
-    const { fusenThread } = stored;
+    const fusenThread = await readThread(stored.workspaceRoot, stored.fusenThread.id);
+    if (!fusenThread) {
+      return;
+    }
     if (
-      code &&
-      (lineRange.startLine !== fusenThread.startLine ||
-        lineRange.endLine !== fusenThread.endLine ||
-        code.join("\n") !== fusenThread.code?.join("\n"))
+      lineRange.startLine !== fusenThread.startLine ||
+      lineRange.endLine !== fusenThread.endLine ||
+      code.join("\n") !== fusenThread.code?.join("\n")
     ) {
       await save(commentThread, { ...stored, fusenThread: { ...fusenThread, ...lineRange, code } });
     } else {
+      storedThreads.set(commentThread, { ...stored, fusenThread });
       render(commentThread);
     }
   }

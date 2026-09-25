@@ -7,6 +7,7 @@ import {
   type FusenThread,
   deleteThread,
   parseThread,
+  readThread,
   readThreads,
   threadFilePath,
   threadsDirectoryPath,
@@ -94,6 +95,15 @@ test("readThreads reports broken files and still returns the valid threads", asy
     invalidFiles.map((invalidFile) => path.basename(invalidFile.path)),
     ["broken.json", "renamed.json"],
   );
+});
+
+test("readThread reads one thread and returns undefined when it has no file", async () => {
+  const workspaceRoot = await createWorkspace();
+  assert.equal(await readThread(workspaceRoot, "thread-a"), undefined);
+  await writeThread(workspaceRoot, sampleThread("thread-a"));
+  assert.deepEqual(await readThread(workspaceRoot, "thread-a"), sampleThread("thread-a"));
+  await writeFile(threadFilePath(workspaceRoot, "renamed"), JSON.stringify(sampleThread("thread-b")), "utf8");
+  await assert.rejects(readThread(workspaceRoot, "renamed"));
 });
 
 test("parseThread drops unknown fields", () => {
