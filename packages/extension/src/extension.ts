@@ -16,6 +16,7 @@ import {
   promptFilePath,
   readPendingProposals,
   readThreads,
+  threadFilePath,
   writePrompt,
   writeThread,
 } from "fusen-core";
@@ -263,12 +264,18 @@ export function activate(context: vscode.ExtensionContext): void {
     // A proposal already in a thread is left over from an approval that stopped between saving the thread and deleting
     // the proposal, and a reply to a thread that no longer exists has no thread to show its approve and reject actions in.
     // Both are settled here, as approved and as rejected; otherwise they would stay pending with no action left to decide them.
-    const { threads } = await readThreads(workspaceRoot);
+    // A thread file that exists but cannot be read is not a deleted thread, so replies to it are kept.
+    const { threads, invalidFiles: invalidThreadFiles } = await readThreads(workspaceRoot);
+    const invalidThreadFilePaths = new Set(invalidThreadFiles.map((invalidFile) => invalidFile.path));
     const proposals: FusenPendingProposal[] = [];
     for (const proposal of proposalsInDirectory) {
       if (
         !isProposalInThreads(threads, proposal.id) &&
-        !(isPendingReply(proposal) && !threads.some((thread) => thread.id === proposal.threadId))
+        !(
+          isPendingReply(proposal) &&
+          !threads.some((thread) => thread.id === proposal.threadId) &&
+          !invalidThreadFilePaths.has(threadFilePath(workspaceRoot, proposal.threadId))
+        )
       ) {
         proposals.push(proposal);
         continue;
