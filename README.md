@@ -4,7 +4,7 @@ Sticky notes on code lines for two-way review with AI agents (VS Code extension 
 
 Leave comments on any line of your working tree, hand them to Claude Code or Codex CLI as one prompt, and let the agents post their own comments back onto the lines — which you approve or reject in the editor.
 
-> Status: under development. Nothing is released yet; until the first release, use the VSIX and `fusen-mcp.mjs` from CI, or build them from a clone.
+> Status: early development. Releases: https://github.com/bannzai/fusen/releases
 
 ## Packages
 
@@ -16,11 +16,13 @@ Leave comments on any line of your working tree, hand them to Claude Code or Cod
 
 ## Install the extension
 
-Fusen is distributed only as a VSIX file, not on the VS Code Marketplace or Open VSX. Download `fusen-<version>.vsix` from a GitHub release (https://github.com/bannzai/fusen/releases), or before the first release from the `fusen-vsix` artifact of a CI run:
+Fusen is distributed only as a VSIX file, not on the VS Code Marketplace or Open VSX. Download `fusen-<version>.vsix` from a GitHub release (https://github.com/bannzai/fusen/releases):
 
 ```sh
-gh run download <run-id> --repo bannzai/fusen -n fusen-vsix
+gh release download --repo bannzai/fusen --pattern 'fusen-*.vsix'
 ```
+
+To try changes that are not released yet, download the `fusen-vsix` artifact of a CI run instead (`gh run download <run-id> --repo bannzai/fusen -n fusen-vsix`).
 
 Then install it:
 
@@ -39,7 +41,7 @@ The server is one JavaScript file, `fusen-mcp.mjs`, that runs with Node.js 22 or
 gh release download --repo bannzai/fusen --pattern fusen-mcp.mjs --dir ~/.fusen
 ```
 
-Before the first release, download it from the `fusen-mcp` artifact of a CI run instead:
+To try changes that are not released yet, download it from the `fusen-mcp` artifact of a CI run instead:
 
 ```sh
 gh run download <run-id> --repo bannzai/fusen -n fusen-mcp -D ~/.fusen
