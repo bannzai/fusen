@@ -11,7 +11,7 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "typecheck": "npm run typecheck --workspaces && tsc -p e2e --noEmit",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && bash .claude/skills/ci-e2e/scripts/test/test-fetch-e2e-screenshots.sh",
     "test:e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "devDependencies": {

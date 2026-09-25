@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# Tests fetch-e2e-screenshots.sh without GitHub: a stub `gh` placed first on PATH answers from the
+# GH_STUB_* variables below and records every call in $GH_STUB_LOG.
+#
+#   GH_STUB_RUN_LIST                 JSON returned by `gh run list` (default: [])
+#   GH_STUB_RUN_LIST_AFTER_DISPATCH  JSON returned by `gh run list` once `gh workflow run` was called (default: GH_STUB_RUN_LIST)
+#   GH_STUB_CONCLUSION               conclusion returned by `gh run view` (default: success)
+#   GH_STUB_NO_ARTIFACT              when set, `gh run download` fails as if the artifact were missing
+set -euo pipefail
+
+script="$(cd "$(dirname "$0")/.." && pwd)/fetch-e2e-screenshots.sh"
+work_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir"' EXIT
+
+mkdir -p "$work_dir/bin"
+cat >"$work_dir/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh $*" >>"$GH_STUB_LOG"
+case "$1 $2" in
+  "run list")
+    if grep -qF "gh workflow run" "$GH_STUB_LOG"; then
+      echo "${GH_STUB_RUN_LIST_AFTER_DISPATCH:-${GH_STUB_RUN_LIST:-[]}}"
+    else
+      echo "${GH_STUB_RUN_LIST:-[]}"
+    fi
+    ;;
+  "run watch") echo "run completed" ;;
+  "run view") printf '{"conclusion":"%s","url":"https://github.com/o/r/actions/runs/%s"}\n' "${GH_STUB_CONCLUSION:-success}" "$3" ;;
+  "run download")
+    [ -z "${GH_STUB_NO_ARTIFACT:-}" ] || { echo "no artifact matches" >&2; exit 1; }
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "-D" ]; then dir="$2"; fi
+      shift
+    done
+    mkdir -p "$dir/activation-Fusen-activates"
+    : >"$dir/activation-Fusen-activates/activation.png"
+    ;;
+  "workflow run") echo "Created workflow_dispatch event" ;;
+  *) echo "unexpected gh call: $*" >&2; exit 99 ;;
+esac
+STUB
+chmod +x "$work_dir/bin/gh"
+
+export PATH="$work_dir/bin:$PATH"
+export GH_STUB_LOG="$work_dir/gh.log"
+
+failures=0
+out_root=""
+
+# Runs the script with the given arguments in a fresh output root and captures stdout, stderr and the exit code.
+run_script() {
+  out_root="$(mktemp -d "$work_dir/out.XXXX")"
+  : >"$GH_STUB_LOG"
+  set +e
+  bash "$script" --out-root "$out_root" "$@" >"$work_dir/stdout" 2>"$work_dir/stderr"
+  status=$?
+  set -e
+}
+
+# Runs the script again with the same output root as the previous run_script call.
+rerun_script() {
+  : >"$GH_STUB_LOG"
+  set +e
+  bash "$script" --out-root "$out_root" "$@" >"$work_dir/stdout" 2>"$work_dir/stderr"
+  status=$?
+  set -e
+}
+
+# Reports the check named $1 as PASS when the command in the remaining arguments succeeds,
+# otherwise as FAIL with the captured output of the last script run.
+check() {
+  local name="$1"
+  shift
+  if "$@"; then
+    echo "PASS: $name"
+  else
+    echo "FAIL: $name"
+    echo "  exit: $status"
+    sed 's/^/  stdout: /' "$work_dir/stdout"
+    sed 's/^/  stderr: /' "$work_dir/stderr"
+    failures=$((failures + 1))
+  fi
+}
+
+# Succeeds when the last script run exited with $1.
+exit_is() { [ "$status" -eq "$1" ]; }
+# Succeeds when the last script run printed the line $1 on stdout.
+stdout_has() { grep -qxF -- "$1" "$work_dir/stdout"; }
+# Succeeds when the last script run printed $1 somewhere on stderr.
+stderr_has() { grep -qF -- "$1" "$work_dir/stderr"; }
+# Succeeds when a gh call of the last script run contains $1 (each call is logged as "gh <args>").
+gh_called() { grep -qF -- "$1" "$GH_STUB_LOG"; }
+
+runs='[
+  {"databaseId": 300, "headSha": "ccc", "event": "pull_request", "createdAt": "2026-09-25T03:00:00Z", "url": "u300"},
+  {"databaseId": 200, "headSha": "bbb", "event": "pull_request", "createdAt": "2026-09-25T02:00:00Z", "url": "u200"},
+  {"databaseId": 100, "headSha": "aaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T01:00:00Z", "url": "u100"}
+]'
+
+# Argument validation
+run_script --unknown
+check "unknown argument exits 2" exit_is 2
+check "unknown argument prints usage" stderr_has "Usage:"
+
+run_script --run-id abc
+check "non-numeric --run-id exits 2" exit_is 2
+
+run_script --find-timeout -1
+check "negative --find-timeout exits 2" exit_is 2
+
+run_script --branch
+check "option without a value exits 2" exit_is 2
+
+run_script --run-id 1 --dispatch
+check "--run-id with --dispatch exits 2" exit_is 2
+
+run_script --dispatch --sha aaa --branch b
+check "--dispatch with --sha exits 2" exit_is 2
+
+run_script --help
+check "--help exits 0" exit_is 0
+
+# Run lookup
+GH_STUB_RUN_LIST='[]' run_script --branch b --sha aaa --find-timeout 0
+check "no run exits 3" exit_is 3
+check "no run explains how to start one" stderr_has "no ci.yml run found for aaa on b"
+
+GH_STUB_RUN_LIST="$runs" run_script --branch b --sha bbb --find-timeout 0
+check "run matching --sha succeeds" exit_is 0
+check "run matching --sha is picked" stdout_has "RUN_ID=200"
+check "run URL is printed" stdout_has "RUN_URL=https://github.com/o/r/actions/runs/200"
+check "conclusion is printed" stdout_has "CONCLUSION=success"
+check "screenshot is listed" stdout_has "SCREENSHOT=$out_root/e2e-200/activation-Fusen-activates/activation.png"
+check "artifact is downloaded by name" gh_called "gh run download 200 -n e2e-screenshots -D $out_root/e2e-200"
+
+rerun_script --branch b --sha bbb --find-timeout 0
+check "second run succeeds" exit_is 0
+check "second run does not download again" bash -c "! grep -qF 'run download' '$GH_STUB_LOG'"
+check "second run still lists the screenshot" stdout_has "SCREENSHOT=$out_root/e2e-200/activation-Fusen-activates/activation.png"
+
+run_script --run-id 42
+check "--run-id succeeds" exit_is 0
+check "--run-id skips the search" bash -c "! grep -qF 'run list' '$GH_STUB_LOG'"
+check "--run-id is used" stdout_has "RUN_ID=42"
+
+# Dispatch: the dispatch run that existed before dispatching (100) must not be picked.
+dispatch_runs='[{"databaseId": 100, "headSha": "aaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T01:00:00Z", "url": "u100"}]'
+runs_after_dispatch='[
+  {"databaseId": 400, "headSha": "aaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T04:00:00Z", "url": "u400"},
+  {"databaseId": 100, "headSha": "aaa", "event": "workflow_dispatch", "createdAt": "2026-09-25T01:00:00Z", "url": "u100"}
+]'
+GH_STUB_RUN_LIST="$dispatch_runs" GH_STUB_RUN_LIST_AFTER_DISPATCH="$runs_after_dispatch" \
+  run_script --branch b --dispatch --find-timeout 0
+check "dispatch succeeds" exit_is 0
+check "dispatch calls gh workflow run" gh_called "gh workflow run ci.yml --ref b"
+check "dispatch picks the new run" stdout_has "RUN_ID=400"
+
+GH_STUB_RUN_LIST="$dispatch_runs" run_script --branch b --dispatch --find-timeout 0
+check "dispatch without a new run exits 3" exit_is 3
+check "dispatch explains the timeout" stderr_has "no new ci.yml run appeared on b"
+
+# Failed runs
+GH_STUB_CONCLUSION=failure run_script --run-id 7
+check "failed run exits 1" exit_is 1
+check "failed run prints the log command" stdout_has "FAILED_LOG_COMMAND=gh run view 7 --log-failed"
+check "failed run still lists screenshots" stdout_has "SCREENSHOT=$out_root/e2e-7/activation-Fusen-activates/activation.png"
+
+GH_STUB_CONCLUSION=failure GH_STUB_NO_ARTIFACT=1 run_script --run-id 8
+check "run without an artifact exits 1" exit_is 1
+check "run without an artifact warns" stderr_has "warning: run 8 has no downloadable e2e-screenshots artifact"
+
+if [ "$failures" -gt 0 ]; then
+  echo "$failures check(s) failed"
+  exit 1
+fi
+echo "all checks passed"
