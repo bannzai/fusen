@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Finds the CI run (.github/workflows/ci.yml) for a commit, waits for it to finish, downloads the
-# screenshots artifact of one editor's E2E job and lists the PNG files in it.
+# screenshots artifact of one E2E job and lists the PNG files in it.
 #
 # Usage:
 #   fetch-e2e-screenshots.sh [--branch <name>] [--sha <commit>] [--dispatch] [--run-id <id>]
-#                            [--editor vscode|cursor] [--out-root <dir>] [--find-timeout <seconds>]
+#                            [--editor vscode|cursor] [--vsix] [--out-root <dir>] [--find-timeout <seconds>]
 #
 #   --branch        Branch whose runs are searched. Default: the current git branch.
 #   --sha           Commit whose run is picked, as a full or abbreviated (7+ characters) SHA. Default: HEAD.
@@ -14,8 +14,11 @@
 #   --run-id        Use this run and skip the search.
 #   --editor        Whose screenshots to download: vscode (job e2e, artifact e2e-screenshots) or cursor
 #                   (job e2e-cursor, artifact e2e-cursor-screenshots). Default: vscode.
-#   --out-root      The artifact goes to <out-root>/e2e-<run id>-<run attempt> for vscode and
-#                   <out-root>/e2e-cursor-<run id>-<run attempt> for cursor. Default: <repository root>/tmp.
+#   --vsix          Download the screenshots of the job that runs the editor with the packaged VSIX installed
+#                   instead of the extension under development: job e2e-vsix (artifact e2e-vsix-screenshots) for
+#                   vscode, job e2e-cursor-vsix (artifact e2e-cursor-vsix-screenshots) for cursor.
+#   --out-root      The artifact goes to <out-root>/<job>-<run id>-<run attempt>, for example
+#                   <out-root>/e2e-cursor-vsix-<run id>-<run attempt>. Default: <repository root>/tmp.
 #   --find-timeout  How long to keep looking for a run that has not been created yet. Default: 120.
 #
 # Output on stdout, one KEY=value per line:
@@ -71,6 +74,7 @@ fail_download() {
 branch=""
 sha=""
 dispatch=false
+vsix=false
 run_id=""
 # VS Code is the editor Fusen is built against and the one the e2e job runs, so its screenshots are the usual evidence.
 editor="vscode"
@@ -96,6 +100,10 @@ while [ $# -gt 0 ]; do
       dispatch=true
       shift
       ;;
+    --vsix)
+      vsix=true
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -107,17 +115,16 @@ while [ $# -gt 0 ]; do
 done
 
 [[ -z "$run_id" || "$run_id" =~ ^[0-9]+$ ]] || fail_usage "--run-id must be a number: $run_id"
+# The job name; its artifact is named <job>-screenshots and downloaded into <job>-<run id>-<run attempt>.
 case "$editor" in
-  vscode)
-    artifact_name="e2e-screenshots"
-    dir_prefix="e2e"
-    ;;
-  cursor)
-    artifact_name="e2e-cursor-screenshots"
-    dir_prefix="e2e-cursor"
-    ;;
+  vscode) dir_prefix="e2e" ;;
+  cursor) dir_prefix="e2e-cursor" ;;
   *) fail_usage "--editor must be vscode or cursor: $editor" ;;
 esac
+if [ "$vsix" = true ]; then
+  dir_prefix="$dir_prefix-vsix"
+fi
+artifact_name="$dir_prefix-screenshots"
 [[ "$find_timeout" =~ ^[0-9]+$ ]] || fail_usage "--find-timeout must be a non-negative integer: $find_timeout"
 if [ -n "$run_id" ] && { [ "$dispatch" = true ] || [ -n "$sha" ]; }; then
   fail_usage "--run-id cannot be combined with --dispatch or --sha"

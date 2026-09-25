@@ -220,6 +220,29 @@ GH_STUB_NO_ARTIFACT=1 run_script --run-id 61 --editor cursor
 check "missing Cursor artifact exits 4" exit_is 4
 check "missing Cursor artifact is named" stderr_has "could not download the e2e-cursor-screenshots artifact of run 61"
 
+# The jobs that run the installed VSIX upload their own artifacts next to the ones of the extension under development.
+vsix_artifacts='{"artifacts": [
+  {"id": 1, "name": "e2e-screenshots", "created_at": "2026-09-25T01:00:00Z", "expired": false},
+  {"id": 4, "name": "e2e-cursor-screenshots", "created_at": "2026-09-25T01:00:00Z", "expired": false},
+  {"id": 5, "name": "e2e-vsix-screenshots", "created_at": "2026-09-25T01:00:00Z", "expired": false},
+  {"id": 6, "name": "e2e-cursor-vsix-screenshots", "created_at": "2026-09-25T01:00:00Z", "expired": false}
+]}'
+GH_STUB_ARTIFACTS="$vsix_artifacts" run_script --run-id 62 --vsix
+check "--vsix succeeds" exit_is 0
+check "--vsix downloads the VS Code VSIX artifact" gh_called "actions/artifacts/5/zip"
+check "--vsix does not download the development artifact" bash -c "! grep -qF 'actions/artifacts/1/zip' '$GH_STUB_LOG'"
+check "--vsix lists its screenshot in its own directory" stdout_has "SCREENSHOT=$out_root/e2e-vsix-62-1/activation-Fusen-activates/activation.png"
+
+GH_STUB_ARTIFACTS="$vsix_artifacts" rerun_script --run-id 62 --editor cursor --vsix
+check "--editor cursor --vsix succeeds" exit_is 0
+check "--editor cursor --vsix downloads the Cursor VSIX artifact" gh_called "actions/artifacts/6/zip"
+check "--editor cursor --vsix lists its screenshot in its own directory" stdout_has "SCREENSHOT=$out_root/e2e-cursor-vsix-62-1/activation-Fusen-activates/activation.png"
+
+GH_STUB_ARTIFACTS="$editor_artifacts" run_script --run-id 63 --vsix
+check "missing VSIX artifact exits 4" exit_is 4
+check "missing VSIX artifact is named" stderr_has "could not download the e2e-vsix-screenshots artifact of run 63"
+check "missing VSIX artifact does not fall back to the development artifact" bash -c "! grep -qF '/zip' '$GH_STUB_LOG'"
+
 run_script --run-id 42
 check "--run-id succeeds" exit_is 0
 check "--run-id skips the search" bash -c "! grep -qF 'run list' '$GH_STUB_LOG'"
