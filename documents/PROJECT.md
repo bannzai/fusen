@@ -48,7 +48,14 @@ One file per thread. `<id>` is the thread's `id` and contains only `A-Z a-z 0-9 
       "id": "5f0d3a4e-8c1b-4d2f-a9e7-2b1c0d9e8f7a",
       "body": "Rename add to sum",
       "author": "human",
-      "createdAt": "2026-09-25T00:00:00.000Z"
+      "createdAt": "2026-09-25T00:00:00.000Z",
+      "git": {
+        "commit": "3f1d2c4b5a69788796a5b4c3d2e1f00112233445",
+        "branch": "main",
+        "staged": false,
+        "unstaged": true,
+        "untracked": false
+      }
     }
   ]
 }
@@ -64,8 +71,16 @@ One file per thread. `<id>` is the thread's `id` and contains only `A-Z a-z 0-9 
 | `comments[].body` | Markdown |
 | `comments[].author` | `human` (written in the editor) or `agent` (written over MCP) |
 | `comments[].createdAt` | ISO 8601 |
+| `comments[].git` | The git state of the commented file when the comment was posted. Optional: omitted when the file is not in a git repository, the repository has no commit yet, git is not installed or git fails, and in comments written before it was added |
+| `comments[].git.commit` | SHA of the commit `HEAD` pointed to: 40 hexadecimal digits, or 64 in a SHA-256 repository |
+| `comments[].git.branch` | Name of the branch checked out. Omitted on a detached `HEAD` |
+| `comments[].git.staged` | Whether the index had changes to the file that `HEAD` does not have |
+| `comments[].git.unstaged` | Whether the file on disk had changes that the index does not have. Unsaved edits in the editor are not on disk and do not count |
+| `comments[].git.untracked` | Whether git did not track the file, including a file that git ignores |
 
-Files are written to a temporary file in the same directory and renamed into place, so a reader never sees a partial file. A file that fails validation is reported and skipped; the other threads still load. Nothing in the format depends on git, so uncommitted and untracked files can be commented.
+Files are written to a temporary file in the same directory and renamed into place, so a reader never sees a partial file. A file that fails validation is reported and skipped; the other threads still load. Nothing in the format requires git, so files outside a repository, uncommitted and untracked files can be commented.
+
+`git` is recorded per comment, not per thread, because replies are often posted at a later commit. It is recorded when the comment is posted: a thread or reply written in the editor, and a thread or reply an agent proposes with `post_comment` or `reply_to_thread`. Approving a proposal moves its comment into the thread as it is, so an approved comment keeps the state of the time the agent posted it, and editing a comment keeps its `git`. Both the extension and the MCP server get it from `readGitState` in `fusen-core`, which runs `git status --porcelain=v2 --branch` on the one file, in the file's directory so that a repository nested in the workspace folder is the one read, and with `--no-optional-locks` so that it never holds the index lock that the editor's own git runs need. Saving a comment never waits more than ten seconds for git and never fails because of it; the comment is saved without `git` instead. git runs as a child process rather than through an npm library, so that the extension and `fusen-mcp.mjs` keep no dependency to cool down and update (`.npmrc` `min-release-age`, Dependabot). Adding `git` did not raise `version`: readers that do not know the field drop it.
 
 ### `.fusen/_pending/<id>.json`
 
@@ -80,7 +95,7 @@ The extension watches `.fusen/` in every workspace folder and re-reads `.fusen/_
 
 ### `.fusen/prompt.md`
 
-The output of the `Fusen: Export comments as prompt to .fusen/prompt.md` command, overwritten on every export and never read back. `Fusen: Copy comments as prompt` puts the same markdown on the clipboard. `createPrompt` in `fusen-core` generates it, so that the MCP server can return the same prompt. It holds every thread of one workspace folder, or only those of the file in the active editor, ordered by file and line: each section is `<file>:<startLine>-<endLine>`, the code of those lines as it is on disk when the prompt is made, and the comments in posting order. The storage format has no resolved state, so every stored thread counts as open.
+The output of the `Fusen: Export comments as prompt to .fusen/prompt.md` command, overwritten on every export and never read back. `Fusen: Copy comments as prompt` puts the same markdown on the clipboard. `createPrompt` in `fusen-core` generates it, so that the MCP server can return the same prompt. It holds every thread of one workspace folder, or only those of the file in the active editor, ordered by file and line: each section is `<file>:<startLine>-<endLine>`, the code of those lines as it is on disk when the prompt is made, and the comments in posting order. A comment with `git` has one line between its author and its body, such as ``_Posted at commit `3f1d2c4` on branch `main`, when the file had unstaged changes._``, with the first seven digits of the commit, the branch or `(detached HEAD)`, and whether the file had staged or unstaged changes, was untracked, or had no uncommitted changes. The storage format has no resolved state, so every stored thread counts as open.
 
 Rejected alternatives: a single `.fusen/threads.json` makes the extension and the MCP server overwrite each other's concurrent changes and conflicts on every edit in git, and markdown files per thread (as in Local Code Review) need a parser for metadata that JSON gives for free.
 
@@ -106,11 +121,11 @@ The server reads and writes the `.fusen/` of one workspace folder: the `--worksp
 
 | Tool | What it does |
 | --- | --- |
-| `list_comments` | Returns `{ threads, pendingProposals, invalidFiles }`: the threads in `.fusen/threads/` (status `open`) and the proposals in `.fusen/_pending/` (status `pending`), in the storage format, optionally only those on `file` or with `status`. A proposed reply is on the file of the thread it replies to. `invalidFiles` lists the files that failed validation, as the extension warns about them |
+| `list_comments` | Returns `{ threads, pendingProposals, invalidFiles }`: the threads in `.fusen/threads/` (status `open`) and the proposals in `.fusen/_pending/` (status `pending`), in the storage format with each comment's `git`, optionally only those on `file` or with `status`. A proposed reply is on the file of the thread it replies to. `invalidFiles` lists the files that failed validation, as the extension warns about them |
 | `get_file_comments` | The same result as `list_comments` for one `file` with both statuses |
 | `get_prompt` | Returns the markdown of `createPrompt` for every thread, or those on `file`, the same text as `Fusen: Copy comments as prompt`. Proposals are not included. Each skipped invalid file is reported in a separate text block after the prompt |
-| `post_comment` | Writes a proposed thread on `file` from `startLine` to `endLine` (1-based, `endLine` defaults to `startLine`). Fails when the path leaves the workspace folder, the file cannot be read, or a line is past the end of the file (counted as the editor counts, so the empty line after a final newline exists) |
-| `reply_to_thread` | Writes a proposed reply to `threadId`. Fails when `.fusen/threads/` has no such thread |
+| `post_comment` | Writes a proposed thread on `file` from `startLine` to `endLine` (1-based, `endLine` defaults to `startLine`), with the `git` state of `file` in its comment. Fails when the path leaves the workspace folder, the file cannot be read, or a line is past the end of the file (counted as the editor counts, so the empty line after a final newline exists) |
+| `reply_to_thread` | Writes a proposed reply to `threadId`, with the `git` state of the thread's file. Fails when `.fusen/threads/` has no such thread |
 | `get_proposal_status` | Returns `pending`, `approved` or `rejected` for a proposal id, derived from the files as described under `.fusen/_pending/<id>.json` |
 
 `post_comment`, `reply_to_thread` and `get_proposal_status` return `{ proposalId, status }`, and `list_comments` and `get_file_comments` their result, as structured content and as JSON text. The read tools declare no output schema, because it would repeat the storage format in a second place. A `file` that is not a path relative to the workspace folder with `/` separators is an error rather than an empty result, so that an agent passing an absolute path learns why nothing matched.
