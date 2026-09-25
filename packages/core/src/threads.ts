@@ -177,7 +177,7 @@ function isCode(value: unknown, lineCount: number): value is string[] {
 }
 
 /** Returns whether `filePath` stays inside the workspace folder and does not depend on the OS separator. */
-function isWorkspaceRelativePath(filePath: string): boolean {
+export function isWorkspaceRelativePath(filePath: string): boolean {
   return (
     filePath.length > 0 &&
     !filePath.includes("\\") &&
