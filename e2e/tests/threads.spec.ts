@@ -86,7 +86,9 @@ test("replies, comment edits and deletions in a thread are saved to .fusen/", as
     const reviewWidget = window.locator(".review-widget", { hasText: "Use a template literal" });
     await expect(reviewWidget).toBeVisible({ timeout: 60_000 });
 
-    await reviewWidget.locator(".comment-form .monaco-editor").click();
+    // The reply box of a thread with comments starts collapsed behind a prompt button that expands and focuses it.
+    await reviewWidget.locator(".review-thread-reply-button").click();
+    await expect(reviewWidget.locator(".comment-form .monaco-editor")).toBeVisible();
     await window.keyboard.type("Already done");
     await reviewWidget.getByRole("button", { name: "Reply" }).click();
     await expect
