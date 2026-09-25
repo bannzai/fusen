@@ -29,6 +29,12 @@ export interface FusenThread {
   startLine: number;
   /** Last commented line, 1-based and inclusive. */
   endLine: number;
+  /**
+   * Text of each line from `startLine` to `endLine` when the thread was last placed on them,
+   * used to find those lines again after the file changes outside the editor.
+   * A thread written without it, for example by an agent, takes the text at its lines the next time the editor places it.
+   */
+  code?: string[];
   /** Comments in the order they were posted. A stored thread always has at least one. */
   comments: FusenComment[];
 }
@@ -80,6 +86,9 @@ export function parseThread(value: unknown): FusenThread {
   if (!isLineNumber(value.startLine) || !isLineNumber(value.endLine) || value.endLine < value.startLine) {
     throw new Error(`Invalid line range: ${JSON.stringify(value.startLine)}-${JSON.stringify(value.endLine)}`);
   }
+  if (value.code !== undefined && !isCode(value.code, value.endLine - value.startLine + 1)) {
+    throw new Error(`Invalid code for lines ${value.startLine}-${value.endLine}: ${JSON.stringify(value.code)}`);
+  }
   if (!Array.isArray(value.comments) || value.comments.length === 0) {
     throw new Error("A thread must have at least one comment");
   }
@@ -89,6 +98,7 @@ export function parseThread(value: unknown): FusenThread {
     file: value.file,
     startLine: value.startLine,
     endLine: value.endLine,
+    ...(value.code === undefined ? {} : { code: value.code }),
     comments: value.comments.map(parseComment),
   };
 }
@@ -172,6 +182,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Returns whether `value` is a 1-based line number. */
 function isLineNumber(value: unknown): value is number {
   return Number.isInteger(value) && (value as number) >= 1;
+}
+
+/** Returns whether `value` is the text of `lineCount` lines, one string per line without its line break. */
+function isCode(value: unknown, lineCount: number): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length === lineCount &&
+    value.every((line) => typeof line === "string" && !/[\r\n]/.test(line))
+  );
 }
 
 /** Returns whether `filePath` stays inside the workspace folder and does not depend on the OS separator. */

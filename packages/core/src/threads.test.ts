@@ -100,6 +100,12 @@ test("parseThread drops unknown fields", () => {
   assert.deepEqual(parseThread({ ...sampleThread("thread-a"), extra: true }), sampleThread("thread-a"));
 });
 
+test("parseThread keeps the code of the commented lines, which a thread may omit", () => {
+  const thread = { ...sampleThread("thread-a"), code: ["  const a = 1;", "", "  return a;"] };
+  assert.deepEqual(parseThread(thread), thread);
+  assert.equal("code" in parseThread({ ...sampleThread("thread-a"), code: undefined }), false);
+});
+
 test("parseThread rejects values that are not a valid thread", () => {
   const thread = sampleThread("thread-a");
   const invalidValues: unknown[] = [
@@ -116,6 +122,10 @@ test("parseThread rejects values that are not a valid thread", () => {
     { ...thread, startLine: 0 },
     { ...thread, startLine: 1.5 },
     { ...thread, startLine: 5, endLine: 4 },
+    { ...thread, code: "  return a;" },
+    { ...thread, code: ["one line for a range of three"] },
+    { ...thread, code: ["a", "b\nc", "d"] },
+    { ...thread, code: ["a", 2, "c"] },
     { ...thread, comments: [] },
     { ...thread, comments: [{ ...thread.comments[0], author: "bot" }] },
     { ...thread, comments: [{ ...thread.comments[0], body: 1 }] },
