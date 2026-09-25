@@ -22,6 +22,21 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Fusen",
+      "properties": {
+        "fusen.humanName": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Name shown as the author of the comments written in the editor. When empty, `Human` is shown."
+        },
+        "fusen.agentName": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Name shown as the author of the comments written by an AI agent over MCP. When empty, `Agent` is shown."
+        }
+      }
+    },
     "commands": [
       {
         "command": "fusen.createThread",

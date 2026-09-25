@@ -197,6 +197,7 @@ export function activate(context: vscode.ExtensionContext): void {
    * Shows the comments of the stored thread in `commentThread`, followed by the pending replies to it.
    * Comments keep their objects across renders, because VS Code keeps the widget of the same object,
    * including the unsaved text of a comment being edited, and recreates the widget of a new one.
+   * A comment not being edited gets a new object when its author name changed; see `reusableComment`.
    */
   function render(commentThread: vscode.CommentThread): void {
     commentThread.label = unlocatedThreads.has(commentThread) ? "Location unknown: the noted code is not in the file" : undefined;
@@ -219,14 +220,16 @@ export function activate(context: vscode.ExtensionContext): void {
         if (renderedComment?.mode === vscode.CommentMode.Editing) {
           return renderedComment;
         }
-        return Object.assign(renderedComment ?? { commentThread, fusenCommentId: fusenComment.id }, commentView(fusenComment));
+        const view = commentView(fusenComment);
+        return Object.assign(reusableComment(renderedComment, view) ?? { commentThread, fusenCommentId: fusenComment.id }, view);
       }),
-      ...pendingReplies(stored).map(([proposalFilePath, reply]) =>
-        Object.assign(renderedReplies.get(proposalFilePath) ?? { fusenProposalFilePath: proposalFilePath }, commentView(reply.comment), {
+      ...pendingReplies(stored).map(([proposalFilePath, reply]) => {
+        const view = commentView(reply.comment);
+        return Object.assign(reusableComment(renderedReplies.get(proposalFilePath), view) ?? { fusenProposalFilePath: proposalFilePath }, view, {
           label: pendingLabel,
           contextValue: proposalContextValue,
-        }),
-      ),
+        });
+      }),
     ];
   }
 
@@ -413,6 +416,15 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  /** Shows the comments of the proposed thread `proposal`, stored in `proposalFilePath`, in its editor thread `commentThread`. */
+  function renderProposalThread(commentThread: vscode.CommentThread, proposalFilePath: string, proposal: FusenThread): void {
+    commentThread.comments = proposal.comments.map((fusenComment): FusenProposalEditorComment => ({
+      fusenProposalFilePath: proposalFilePath,
+      ...commentView(fusenComment),
+      contextValue: proposedThreadCommentContextValue,
+    }));
+  }
+
   /** Removes the editor thread of the proposed thread in `proposalFilePath`, if it is shown. */
   function removeProposalThread(proposalFilePath: string): void {
     proposalThreads.get(proposalFilePath)?.dispose();
@@ -475,11 +487,7 @@ export function activate(context: vscode.ExtensionContext): void {
         commentThread.label = pendingLabel;
         commentThread.contextValue = proposalContextValue;
         commentThread.canReply = false;
-        commentThread.comments = proposal.comments.map((fusenComment): FusenProposalEditorComment => ({
-          fusenProposalFilePath: proposalFilePath,
-          ...commentView(fusenComment),
-          contextValue: proposedThreadCommentContextValue,
-        }));
+        renderProposalThread(commentThread, proposalFilePath, proposal);
         proposalThreads.set(proposalFilePath, commentThread);
       }
     }
@@ -657,6 +665,21 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidOpenTextDocument((document) => {
       // Edits discarded when the document was closed without saving may have moved its threads.
       relocateThreadsOnReportingErrors(document.uri);
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      // The author names come from the settings, so the open threads are shown again with the new names.
+      if (!event.affectsConfiguration("fusen.humanName") && !event.affectsConfiguration("fusen.agentName")) {
+        return;
+      }
+      for (const commentThread of storedThreads.keys()) {
+        render(commentThread);
+      }
+      for (const [proposalFilePath, commentThread] of proposalThreads) {
+        const proposal = storedProposals.get(proposalFilePath)?.proposal;
+        if (proposal && !isPendingReply(proposal)) {
+          renderProposalThread(commentThread, proposalFilePath, proposal);
+        }
+      }
     }),
     fileSystemWatcher,
     fileSystemWatcher.onDidCreate((uri) => relocateThreadsOnReportingErrors(uri)),
@@ -931,9 +954,28 @@ function commentView(fusenComment: FusenComment): Pick<vscode.Comment, "body" | 
   return {
     body: new vscode.MarkdownString(fusenComment.body),
     mode: vscode.CommentMode.Preview,
-    author: { name: fusenComment.author === "human" ? "Human" : "Agent" },
+    author: { name: authorName(fusenComment.author) },
     timestamp: new Date(fusenComment.createdAt),
   };
+}
+
+/**
+ * Returns `renderedComment` when it can be rendered again with `view`, or `undefined` when the comment needs a new object.
+ * VS Code updates the body, label and timestamp of a comment it already shows but not its author (checked in 1.139.1),
+ * and shows a new object as a new comment, so a comment whose author name changed needs a new object to show the new name.
+ */
+function reusableComment<T extends vscode.Comment>(renderedComment: T | undefined, view: Pick<vscode.Comment, "author">): T | undefined {
+  return renderedComment?.author.name === view.author.name ? renderedComment : undefined;
+}
+
+/**
+ * Returns the name shown as the author of a comment written by `author`, from the `fusen.humanName` and `fusen.agentName` settings.
+ * The stored `author` stays `human` or `agent`; the settings only change what the editor shows.
+ */
+function authorName(author: FusenComment["author"]): string {
+  const configuration = vscode.workspace.getConfiguration("fusen");
+  // An empty setting, the default, shows the names Fusen showed before the settings existed.
+  return author === "human" ? configuration.get<string>("humanName") || "Human" : configuration.get<string>("agentName") || "Agent";
 }
 
 /** Returns a handler that shows a failure of Fusen's background work with `summary`, instead of leaving it unhandled. */

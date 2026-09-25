@@ -139,6 +139,8 @@ The screenshots below are taken by the E2E tests in `e2e/tests/`.
 
 Hover over the gutter next to a line and click `+` (drag in the gutter to cover several lines), write the note in markdown and click **Add Note**. The note is saved to `.fusen/threads/` in the workspace and comes back when the workspace is opened again. Reply, edit or delete a note from its thread; the Comments panel lists every note.
 
+Comments are shown as written by "Human" or "Agent"; set `fusen.humanName` and `fusen.agentName` in the settings to show other names.
+
 ![A note on line 6 of sample.ts, added from the gutter](documents/images/add-note.png)
 
 A note stays on its code while the file changes: edits above it move it, and changes made outside the editor (a git checkout, an agent rewriting the file) are followed by finding its code again. When the code is gone, the note is labelled "Location unknown".
