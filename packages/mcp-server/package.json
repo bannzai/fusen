@@ -6,14 +6,15 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bannzai/fusen"
+    "url": "git+https://github.com/bannzai/fusen.git"
   },
   "type": "module",
   "bin": {
-    "fusen-mcp": "./out/index.js"
+    "fusen-mcp": "out/index.js"
   },
   "files": [
-    "out"
+    "out",
+    "!out/**/*.test.*"
   ],
   "engines": {
     "node": ">=22"
