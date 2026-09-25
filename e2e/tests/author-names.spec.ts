@@ -62,6 +62,17 @@ test("comment authors are shown with the names in fusen.humanName and fusen.agen
     await expect(humanComment).toContainText("Human");
     await expect(humanComment).not.toContainText("Octocat");
     await window.screenshot({ path: testInfo.outputPath("author-names-changed.png") });
+
+    // A comment being edited when the name changes shows the new name once the edit ends.
+    await humanComment.hover();
+    await humanComment.getByRole("button", { name: "Edit" }).click();
+    await expect(humanComment.locator(".edit-container .monaco-editor")).toBeVisible();
+    await writeSettings({ "fusen.humanName": "Octocat", "fusen.agentName": "Codex" });
+    // The agent's comment showing its new name tells that the change reached the extension while the other comment was being edited.
+    await expect(agentComment).toContainText("Codex", { timeout: 30_000 });
+    await humanComment.getByRole("button", { name: "Cancel" }).click();
+    await expect(humanComment).toContainText("Octocat");
+    await window.screenshot({ path: testInfo.outputPath("author-names-after-edit.png") });
   } finally {
     await app.close();
   }

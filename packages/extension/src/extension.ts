@@ -196,6 +196,7 @@ export function activate(context: vscode.ExtensionContext): void {
    * Shows the comments of the stored thread in `commentThread`, followed by the pending replies to it.
    * Comments keep their objects across renders, because VS Code keeps the widget of the same object,
    * including the unsaved text of a comment being edited, and recreates the widget of a new one.
+   * A comment not being edited gets a new object when its author name changed; see `reusableComment`.
    */
   function render(commentThread: vscode.CommentThread): void {
     commentThread.label = unlocatedThreads.has(commentThread) ? "Location unknown: the noted code is not in the file" : undefined;
@@ -218,14 +219,16 @@ export function activate(context: vscode.ExtensionContext): void {
         if (renderedComment?.mode === vscode.CommentMode.Editing) {
           return renderedComment;
         }
-        return Object.assign(renderedComment ?? { commentThread, fusenCommentId: fusenComment.id }, commentView(fusenComment));
+        const view = commentView(fusenComment);
+        return Object.assign(reusableComment(renderedComment, view) ?? { commentThread, fusenCommentId: fusenComment.id }, view);
       }),
-      ...pendingReplies(stored).map(([proposalFilePath, reply]) =>
-        Object.assign(renderedReplies.get(proposalFilePath) ?? { fusenProposalFilePath: proposalFilePath }, commentView(reply.comment), {
+      ...pendingReplies(stored).map(([proposalFilePath, reply]) => {
+        const view = commentView(reply.comment);
+        return Object.assign(reusableComment(renderedReplies.get(proposalFilePath), view) ?? { fusenProposalFilePath: proposalFilePath }, view, {
           label: pendingLabel,
           contextValue: proposalContextValue,
-        }),
-      ),
+        });
+      }),
     ];
   }
 
@@ -668,10 +671,6 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       for (const commentThread of storedThreads.keys()) {
-        // VS Code updates the body, label and timestamp of a comment it already shows, but not its author (checked in 1.139.1),
-        // so the comments are rendered as new objects, which VS Code shows as new comments. A comment being edited keeps its
-        // object, and with it the unsaved text and the old name.
-        commentThread.comments = commentThread.comments.filter((comment) => comment.mode === vscode.CommentMode.Editing);
         render(commentThread);
       }
       for (const [proposalFilePath, commentThread] of proposalThreads) {
@@ -944,6 +943,15 @@ function commentView(fusenComment: FusenComment): Pick<vscode.Comment, "body" | 
     author: { name: authorName(fusenComment.author) },
     timestamp: new Date(fusenComment.createdAt),
   };
+}
+
+/**
+ * Returns `renderedComment` when it can be rendered again with `view`, or `undefined` when the comment needs a new object.
+ * VS Code updates the body, label and timestamp of a comment it already shows but not its author (checked in 1.139.1),
+ * and shows a new object as a new comment, so a comment whose author name changed needs a new object to show the new name.
+ */
+function reusableComment<T extends vscode.Comment>(renderedComment: T | undefined, view: Pick<vscode.Comment, "author">): T | undefined {
+  return renderedComment?.author.name === view.author.name ? renderedComment : undefined;
 }
 
 /**
