@@ -7,6 +7,7 @@ import {
   type FusenThread,
   deleteThread,
   parseThread,
+  readThread,
   readThreads,
   threadFilePath,
   threadsDirectoryPath,
@@ -96,8 +97,23 @@ test("readThreads reports broken files and still returns the valid threads", asy
   );
 });
 
+test("readThread reads one thread and returns undefined when it has no file", async () => {
+  const workspaceRoot = await createWorkspace();
+  assert.equal(await readThread(workspaceRoot, "thread-a"), undefined);
+  await writeThread(workspaceRoot, sampleThread("thread-a"));
+  assert.deepEqual(await readThread(workspaceRoot, "thread-a"), sampleThread("thread-a"));
+  await writeFile(threadFilePath(workspaceRoot, "renamed"), JSON.stringify(sampleThread("thread-b")), "utf8");
+  await assert.rejects(readThread(workspaceRoot, "renamed"));
+});
+
 test("parseThread drops unknown fields", () => {
   assert.deepEqual(parseThread({ ...sampleThread("thread-a"), extra: true }), sampleThread("thread-a"));
+});
+
+test("parseThread keeps the code of the commented lines, which a thread may omit", () => {
+  const thread = { ...sampleThread("thread-a"), code: ["  const a = 1;", "", "  return a;"] };
+  assert.deepEqual(parseThread(thread), thread);
+  assert.equal("code" in parseThread({ ...sampleThread("thread-a"), code: undefined }), false);
 });
 
 test("parseThread rejects values that are not a valid thread", () => {
@@ -116,6 +132,10 @@ test("parseThread rejects values that are not a valid thread", () => {
     { ...thread, startLine: 0 },
     { ...thread, startLine: 1.5 },
     { ...thread, startLine: 5, endLine: 4 },
+    { ...thread, code: "  return a;" },
+    { ...thread, code: ["one line for a range of three"] },
+    { ...thread, code: ["a", "b\nc", "d"] },
+    { ...thread, code: ["a", 2, "c"] },
     { ...thread, comments: [] },
     { ...thread, comments: [{ ...thread.comments[0], author: "bot" }] },
     { ...thread, comments: [{ ...thread.comments[0], body: 1 }] },

@@ -42,6 +42,7 @@ One file per thread. `<id>` is the thread's `id` and contains only `A-Z a-z 0-9 
   "file": "src/sample.ts",
   "startLine": 6,
   "endLine": 6,
+  "code": ["  return a + b;"],
   "comments": [
     {
       "id": "5f0d3a4e-8c1b-4d2f-a9e7-2b1c0d9e8f7a",
@@ -57,7 +58,8 @@ One file per thread. `<id>` is the thread's `id` and contains only `A-Z a-z 0-9 
 | --- | --- |
 | `version` | Format version, raised only for a change that older readers cannot handle |
 | `file` | Path relative to the workspace folder with `/` separators. Absolute paths and `..` segments are rejected |
-| `startLine`, `endLine` | 1-based inclusive line range, the numbering people and agents use when they talk about code |
+| `startLine`, `endLine` | 1-based inclusive line range, the numbering people and agents use when they talk about code. It refers to the file as saved on disk |
+| `code` | Text of each line from `startLine` to `endLine` when the thread was last placed, used to find the lines again (see "Following code changes"). Optional: a thread written without it, by an agent or on unsaved changes in the editor, takes the text at its lines the next time the extension places it or the document is saved |
 | `comments` | In posting order, never empty: deleting the last comment deletes the file |
 | `comments[].body` | Markdown |
 | `comments[].author` | `human` (written in the editor) or `agent` (written over MCP) |
@@ -79,6 +81,16 @@ Rejecting deletes the proposal file.
 The output of the `Fusen: Export comments as prompt to .fusen/prompt.md` command, overwritten on every export and never read back. `Fusen: Copy comments as prompt` puts the same markdown on the clipboard. `createPrompt` in `fusen-core` generates it, so that the MCP server can return the same prompt. It holds every thread of one workspace folder, or only those of the file in the active editor, ordered by file and line: each section is `<file>:<startLine>-<endLine>`, the code of those lines as it is on disk when the prompt is made, and the comments in posting order. The storage format has no resolved state, so every stored thread counts as open.
 
 Rejected alternatives: a single `.fusen/threads.json` makes the extension and the MCP server overwrite each other's concurrent changes and conflicts on every edit in git, and markdown files per thread (as in Local Code Review) need a parser for metadata that JSON gives for free.
+
+### Following code changes
+
+A thread stays on the code it was written on while the file changes. `packages/core` (`location.ts`) holds the logic; the extension applies it.
+
+- **Edits in the editor**: each edit moves the thread's range in memory (lines added or removed above it, or a line break typed into the indentation of its first line, move it; lines added or removed inside it grow or shrink it; a line break typed after the code of its last line leaves it as it is). The new lines and their `code` are written to `.fusen/` when the document is saved, not on every edit, because `startLine` / `endLine` must refer to the file on disk that the MCP server and agents read. Deleting every commented line makes the thread's location unknown.
+- **Changes outside the editor** (git checkout, an agent rewriting the file, edits undone to the saved text, or changes while the workspace was closed): the thread is placed where its `code` is now in the file, and the new lines are written to `.fusen/`. Leading and trailing whitespace is ignored so that re-indenting does not lose the thread; when the code appears more than once, the match nearest to the old `startLine` wins.
+- **Location unknown**: when the code is no longer in the file (the commented lines were changed or deleted outside the editor, or the file was deleted), the thread is shown at its stored lines with the label "Location unknown". Its stored lines and `code` are kept unchanged, so it is placed again if the code comes back (for example after checking out the previous branch, or by undoing the deletion in the editor). Edits do not move it until then.
+
+Rejected alternative: a content hash of the lines, as Code Context Notes uses. It supports only an exact match, and agents cannot read it; the stored text also lets the whitespace-insensitive comparison work.
 
 ## Rejected options
 

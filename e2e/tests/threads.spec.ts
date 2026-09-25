@@ -1,4 +1,5 @@
 import { cpSync, mkdtempSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
@@ -50,6 +51,7 @@ test("a note added from the gutter is saved to .fusen/ and restored after a rest
       file: "sample.ts",
       startLine: 6,
       endLine: 6,
+      code: ["  return a + b;"],
       comments: [{ body: noteText, author: "human" }],
     });
     await window.screenshot({ path: testInfo.outputPath("thread-added.png") });
@@ -64,6 +66,56 @@ test("a note added from the gutter is saved to .fusen/ and restored after a rest
     await window.screenshot({ path: testInfo.outputPath("thread-restored.png") });
   } finally {
     await secondApp.close();
+  }
+});
+
+test("a note stays on its code when a line is inserted above it and the file is saved", async ({}, testInfo) => {
+  const profilePath = mkdtempSync(path.join(tmpdir(), "fusen-e2e-"));
+  const workspacePath = path.join(profilePath, "workspace");
+  cpSync(fixtureWorkspacePath, workspacePath, { recursive: true });
+  const filePath = path.join(workspacePath, "sample.ts");
+  const noteText = "Rename add to sum";
+  await writeThread(workspacePath, {
+    version: 1,
+    id: "e2e-thread",
+    file: "sample.ts",
+    startLine: 6,
+    endLine: 6,
+    code: ["  return a + b;"],
+    comments: [{ id: "first", body: noteText, author: "human", createdAt: new Date().toISOString() }],
+  });
+
+  const app = await launchVSCode({ profilePath, workspacePath, filePath });
+  try {
+    const window = await app.firstWindow({ timeout: vscodeStartupTimeoutMs });
+    const reviewWidget = window.locator(".review-widget", { hasText: noteText });
+    await expect(reviewWidget).toBeVisible({ timeout: 60_000 });
+
+    // A line break at the start of the line above the function inserts an empty line without auto-indentation.
+    await window.locator(".view-line", { hasText: "export function add" }).click();
+    await window.keyboard.press("Home");
+    await window.keyboard.press("Enter");
+    await window.keyboard.press("ControlOrMeta+S");
+
+    await expect
+      .poll(async () => (await readFile(filePath, "utf8")).split("\n")[6])
+      .toBe("  return a + b;");
+    await expect
+      .poll(async () => (await readThreads(workspacePath)).threads[0])
+      .toMatchObject({ startLine: 7, endLine: 7, code: ["  return a + b;"] });
+
+    // The thread widget is shown right below the last line of its range, so it must sit below the moved code, not above it.
+    const targetLine = window.locator(".view-line", { hasText: "return a + b;" });
+    await expect
+      .poll(async () => {
+        const targetLineBox = await targetLine.boundingBox();
+        const reviewWidgetBox = await reviewWidget.boundingBox();
+        return targetLineBox && reviewWidgetBox ? reviewWidgetBox.y - (targetLineBox.y + targetLineBox.height) : undefined;
+      })
+      .toBeGreaterThanOrEqual(-1);
+    await window.screenshot({ path: testInfo.outputPath("thread-followed-code.png") });
+  } finally {
+    await app.close();
   }
 });
 
