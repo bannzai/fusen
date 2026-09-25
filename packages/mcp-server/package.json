@@ -10,11 +10,11 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22.7"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc -p . && npm run bundle",
-    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/index.js --metafile=dist/metafile.json && cp dist/index.js dist/fusen-mcp.js",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/index.js --metafile=dist/metafile.json && cp dist/index.js dist/fusen-mcp.mjs",
     "typecheck": "tsc -p . --noEmit",
     "test": "npm run build && node --test \"out/**/*.test.js\""
   },

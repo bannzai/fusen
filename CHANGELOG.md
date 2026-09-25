@@ -1,6 +1,6 @@
 # Changelog
 
-The VS Code extension (`fusen-<version>.vsix`) and the MCP server (`fusen-mcp.js`) are released together under the same version, as files attached to a GitHub release.
+The VS Code extension (`fusen-<version>.vsix`) and the MCP server (`fusen-mcp.mjs`) are released together under the same version, as files attached to a GitHub release.
 
 ## 0.1.0
 

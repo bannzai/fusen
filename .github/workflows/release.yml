@@ -1,6 +1,6 @@
 name: Release
 
-# A `v*` tag push attaches the extension VSIX and the single-file MCP server (fusen-mcp.js) to a GitHub release.
+# A `v*` tag push attaches the extension VSIX and the single-file MCP server (fusen-mcp.mjs) to a GitHub release.
 # A manual run (workflow_dispatch) and a pull request that touches the release inputs build the same files
 # and create no release. GitHub only dispatches workflows that exist on the default branch,
 # so the pull request trigger is what checks changes to this workflow before they are merged.
@@ -51,12 +51,12 @@ jobs:
       - run: npm run package --workspace packages/extension
       - run: npm run check-vsix --workspace packages/extension
       - name: List the release files
-        run: ls -l packages/extension/*.vsix packages/mcp-server/dist/fusen-mcp.js
+        run: ls -l packages/extension/*.vsix packages/mcp-server/dist/fusen-mcp.mjs
       # A release left behind by an earlier attempt gets the files re-uploaded instead of failing on "already exists".
-      - name: Attach the VSIX and fusen-mcp.js to a GitHub release
+      - name: Attach the VSIX and fusen-mcp.mjs to a GitHub release
         if: env.IS_RELEASE == 'true'
         run: |
-          release_files=(packages/extension/*.vsix packages/mcp-server/dist/fusen-mcp.js)
+          release_files=(packages/extension/*.vsix packages/mcp-server/dist/fusen-mcp.mjs)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${release_files[@]}" --clobber
           else

@@ -47,8 +47,11 @@ interface BundleMetafile {
 const packageDirectoryPath = fileURLToPath(new URL("..", import.meta.url));
 // The tests start a copy of the single-file server that GitHub releases ship, not the tsc output next to this file.
 // The copy sits in a new temporary directory, outside any node_modules, so a module left out of the bundle fails every test.
-const serverScriptPath = path.join(await mkdtemp(path.join(tmpdir(), "fusen-mcp-script-")), "fusen-mcp.js");
-await copyFile(path.join(packageDirectoryPath, "dist", "fusen-mcp.js"), serverScriptPath);
+// The directory's package.json declares CommonJS, the case where a `.js` copy of the ES module would not start.
+const serverScriptDirectoryPath = await mkdtemp(path.join(tmpdir(), "fusen-mcp-script-"));
+await writeFile(path.join(serverScriptDirectoryPath, "package.json"), JSON.stringify({ type: "commonjs" }), "utf8");
+const serverScriptPath = path.join(serverScriptDirectoryPath, "fusen-mcp.mjs");
+await copyFile(path.join(packageDirectoryPath, "dist", "fusen-mcp.mjs"), serverScriptPath);
 
 /**
  * Starts the stdio server with `workspaceRoot` as its working directory, `args` after the script
@@ -339,16 +342,16 @@ test("the workspace folder is --workspace, then CLAUDE_PROJECT_DIR, then the wor
   assert.deepEqual(await readThreadIds({ args: ["--workspace", "nested"] }), ["in-nested"]);
 });
 
-test("fusen-mcp.js is the whole server in one file, which loads nothing but Node built-ins", async () => {
+test("fusen-mcp.mjs is the whole server in one file, which loads nothing but Node built-ins", async () => {
   const metafile = JSON.parse(await readFile(path.join(packageDirectoryPath, "dist", "metafile.json"), "utf8")) as BundleMetafile;
   assert.deepEqual(Object.keys(metafile.outputs), ["dist/index.js"]);
   assert.deepEqual(
     await readFile(serverScriptPath, "utf8"),
     await readFile(path.join(packageDirectoryPath, "dist", "index.js"), "utf8"),
-    "fusen-mcp.js differs from the dist/index.js that a clone registers",
+    "fusen-mcp.mjs differs from the dist/index.js that a clone registers",
   );
   const builtinModuleNames = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
   for (const { path: importedModule, external } of metafile.outputs["dist/index.js"]?.imports ?? []) {
-    assert.ok(external && builtinModuleNames.has(importedModule), `fusen-mcp.js loads ${importedModule} at run time`);
+    assert.ok(external && builtinModuleNames.has(importedModule), `fusen-mcp.mjs loads ${importedModule} at run time`);
   }
 });

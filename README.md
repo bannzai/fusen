@@ -4,7 +4,7 @@ Sticky notes on code lines for two-way review with AI agents (VS Code extension 
 
 Leave comments on any line of your working tree, hand them to Claude Code or Codex CLI as one prompt, and let the agents post their own comments back onto the lines — which you approve or reject in the editor.
 
-> Status: under development. Nothing is released yet; until the first release, use the VSIX and `fusen-mcp.js` from CI, or build them from a clone.
+> Status: under development. Nothing is released yet; until the first release, use the VSIX and `fusen-mcp.mjs` from CI, or build them from a clone.
 
 ## Packages
 
@@ -33,10 +33,10 @@ To build the VSIX yourself from a clone: `npm ci && npm run build && npm run pac
 
 ## Register the MCP server
 
-The server is one JavaScript file, `fusen-mcp.js`, that runs with Node.js 22.7 or later and needs no npm install. It is an ES module that Node.js recognizes by its `import` statements (syntax detection, on by default since Node.js 22.7), so keep it out of any directory whose `package.json` sets `"type": "commonjs"`. Download it from a GitHub release (https://github.com/bannzai/fusen/releases) and keep it where it can stay, for example `~/.fusen`:
+The server is one JavaScript file, `fusen-mcp.mjs`, that runs with Node.js 22 or later and needs no npm install. Download it from a GitHub release (https://github.com/bannzai/fusen/releases) and keep it where it can stay, for example `~/.fusen`:
 
 ```sh
-gh release download --repo bannzai/fusen --pattern fusen-mcp.js --dir ~/.fusen
+gh release download --repo bannzai/fusen --pattern fusen-mcp.mjs --dir ~/.fusen
 ```
 
 Before the first release, download it from the `fusen-mcp` artifact of a CI run instead:
@@ -45,7 +45,7 @@ Before the first release, download it from the `fusen-mcp` artifact of a CI run 
 gh run download <run-id> --repo bannzai/fusen -n fusen-mcp -D ~/.fusen
 ```
 
-Then register `node <absolute path of fusen-mcp.js>` with your agent, as shown below. To run the server from a clone instead, see "From a clone".
+Then register `node <absolute path of fusen-mcp.mjs>` with your agent, as shown below. To run the server from a clone instead, see "From a clone".
 
 ### Which workspace the server reads
 
@@ -60,7 +60,7 @@ Claude Code therefore needs no extra setting. Codex CLI does not tell the server
 ### Claude Code
 
 ```sh
-claude mcp add fusen -- node ~/.fusen/fusen-mcp.js
+claude mcp add fusen -- node ~/.fusen/fusen-mcp.mjs
 ```
 
 Add `--scope project` to share the registration with the repository instead; it is written to `.mcp.json` at the project root:
@@ -70,7 +70,7 @@ Add `--scope project` to share the registration with the repository instead; it 
   "mcpServers": {
     "fusen": {
       "command": "node",
-      "args": ["/absolute/path/to/fusen-mcp.js"]
+      "args": ["/absolute/path/to/fusen-mcp.mjs"]
     }
   }
 }
@@ -83,20 +83,20 @@ Register it per project in `.codex/config.toml` at the project root (Codex CLI l
 ```toml
 [mcp_servers.fusen]
 command = "node"
-args = ["/absolute/path/to/fusen-mcp.js"]
+args = ["/absolute/path/to/fusen-mcp.mjs"]
 cwd = "/absolute/path/to/project"
 ```
 
 or pass the project as an argument, which also works in `~/.codex/config.toml` or with `codex mcp add`:
 
 ```sh
-codex mcp add fusen -- node ~/.fusen/fusen-mcp.js --workspace /absolute/path/to/project
+codex mcp add fusen -- node ~/.fusen/fusen-mcp.mjs --workspace /absolute/path/to/project
 ```
 
 ```toml
 [mcp_servers.fusen]
 command = "node"
-args = ["/absolute/path/to/fusen-mcp.js", "--workspace", "/absolute/path/to/project"]
+args = ["/absolute/path/to/fusen-mcp.mjs", "--workspace", "/absolute/path/to/project"]
 ```
 
 Without either, the server uses the directory Codex CLI started it in.
@@ -114,7 +114,7 @@ claude mcp add fusen -- node "$PWD/packages/mcp-server/dist/index.js"
 codex mcp add fusen -- node "$PWD/packages/mcp-server/dist/index.js" --workspace /absolute/path/to/project
 ```
 
-`packages/mcp-server/dist/index.js` is the same file as the released `fusen-mcp.js`, so the registrations above work with it in place of `/absolute/path/to/fusen-mcp.js`.
+`packages/mcp-server/dist/index.js` is the same file as the released `fusen-mcp.mjs`, so the registrations above work with it in place of `/absolute/path/to/fusen-mcp.mjs`.
 
 ## Usage
 
@@ -174,9 +174,9 @@ Design notes: [documents/PROJECT.md](documents/PROJECT.md)
 `.github/workflows/release.yml` publishes a release when a `v<version>` tag is pushed:
 
 1. Set the same `version` in `packages/extension/package.json` and `packages/mcp-server/package.json`, and add its changes to `CHANGELOG.md`.
-2. Push the tag, for example `git tag v0.1.0 && git push origin v0.1.0`. The workflow checks the versions against the tag and creates a GitHub release with the VSIX and `fusen-mcp.js` attached.
+2. Push the tag, for example `git tag v0.1.0 && git push origin v0.1.0`. The workflow checks the versions against the tag and creates a GitHub release with the VSIX and `fusen-mcp.mjs` attached.
 
-Running the workflow manually (`gh workflow run release.yml --ref <branch>`) is a dry run: it builds the VSIX and `fusen-mcp.js` without creating a release.
+Running the workflow manually (`gh workflow run release.yml --ref <branch>`) is a dry run: it builds the VSIX and `fusen-mcp.mjs` without creating a release.
 
 ## License
 
