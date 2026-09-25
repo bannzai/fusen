@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "npm run build --workspaces",
-    "typecheck": "npm run typecheck --workspaces && tsc -p e2e --noEmit",
+    "typecheck": "npm run build -w fusen-core && npm run typecheck --workspaces && tsc -p e2e --noEmit",
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "playwright test -c e2e/playwright.config.ts"
   },

@@ -1,0 +1,21 @@
+{
+  "name": "fusen-core",
+  "description": "Read and write the .fusen/ storage shared by the Fusen extension and MCP server",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bannzai/fusen"
+  },
+  "main": "./out/index.js",
+  "types": "./out/index.d.ts",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "test": "tsc -p . && node --test \"out/**/*.test.js\""
+  }
+}
