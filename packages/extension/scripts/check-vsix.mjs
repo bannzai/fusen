@@ -19,7 +19,11 @@ const allowedModules = new Set(["vscode", ...builtinModules, ...builtinModules.m
 
 const failures = [];
 for (const functionName of fusenCoreFunctions) {
-  if (!new RegExp(`function ${functionName}\\(`).test(entrySource)) {
+  // esbuild renames bundled declarations that collide with other names by appending a number
+  // (`async function readThreads2(`), so the definition and the module export are matched with an optional suffix.
+  const isDefined = new RegExp(`\\bfunction ${functionName}\\d*\\(`).test(entrySource);
+  const isExported = new RegExp(`\\bexports\\d*\\.${functionName} = ${functionName}\\d*;`).test(entrySource);
+  if (!isDefined || !isExported) {
     const mentions = entrySource
       .split("\n")
       .filter((line) => line.includes(functionName))
