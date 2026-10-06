@@ -1,5 +1,6 @@
 # Install Fusen from the latest GitHub release: the extension into an editor, and the MCP server into an agent.
-# Every target downloads the latest release again and overwrites the previous files, so re-running it upgrades.
+# Every install target downloads the latest release again and overwrites the previous files, so re-running it upgrades.
+# `make` without a target runs `verify` (at the end of this file), the checks of the build-test job in CI.
 
 # Where the release files are kept; the MCP server is registered with its path here, so it must stay.
 FUSEN_DIR ?= $(HOME)/.fusen
@@ -34,3 +35,13 @@ claude: download
 codex: download
 	-codex mcp remove fusen
 	codex mcp add fusen -- node $(MCP_SERVER)
+
+# `make` without a target runs verify.
+.DEFAULT_GOAL := verify
+
+.PHONY: verify
+verify:
+	npm ci
+	npm run typecheck
+	npm run build
+	npm test

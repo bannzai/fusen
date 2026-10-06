@@ -178,6 +178,8 @@ npm test
 xvfb-run -a npm run test:e2e   # Linux; on macOS run `npm run test:e2e`
 ```
 
+`make` without a target runs `verify`, which is the first four commands above (the `build-test` job of CI).
+
 To run the E2E tests in another editor build such as Cursor, set `FUSEN_E2E_EXECUTABLE_PATH` to its executable. On Linux x64, `bash e2e/scripts/download-cursor.sh <dir>` downloads the latest stable Cursor and prints that path.
 
 To run the E2E tests against a packaged extension instead of `packages/extension`, set `FUSEN_E2E_VSIX_PATH` to the `.vsix` file (from `npm run package --workspace packages/extension`). Each launch installs it with the editor's `--install-extension` into the test profile. This works with the Linux builds of VS Code and Cursor, which keep their command-line interface in `bin/` next to the executable.
